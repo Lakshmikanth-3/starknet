@@ -50,6 +50,15 @@ console.log(`📂 Database path: ${dbPath}`);
 const db = new Database(dbPath);
 
 // ============================================
+// SERVICES & CONTROLLERS INITIALIZATION
+// ============================================
+
+const vaultService = new VaultService(db);
+const vaultController = new VaultController(vaultService);
+
+console.log('✅ Services and controllers initialized');
+
+// ============================================
 // ROUTES - MUST BE AFTER MIDDLEWARE, BEFORE ERROR HANDLERS
 // ============================================
 
