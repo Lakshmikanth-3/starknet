@@ -1,39 +1,72 @@
-# Quick Deployment Commands
+# Quick Deployment to Railway.app 🚂
 
-## Step 1: Create GitHub Repo
+## Method 1: Railway Dashboard (Easiest)
+
+### Step 1: Push to GitHub
 Go to: https://github.com/new
 - Name: privatebtc-backend
 - Public repository
-- Don't initialize with README
 
-## Step 2: Push to GitHub
 ```powershell
 cd c:\Users\sl\OneDrive\Documents\Hackathons\starknet\privatebtc-backend
-
-# Replace YOUR_USERNAME with your GitHub username
 git remote add origin https://github.com/YOUR_USERNAME/privatebtc-backend.git
 git branch -M main
 git push -u origin main
 ```
 
-## Step 3: Deploy to Render
-1. Go to: https://render.com
-2. Sign in with GitHub
-3. Click "New +" → "Web Service"
-4. Connect `privatebtc-backend` repository
-5. Settings should auto-fill:
-   - Build: `npm install && npm run build`
-   - Start: `npm start`
-6. Click "Create Web Service"
+### Step 2: Deploy to Railway
+1. Go to: https://railway.app
+2. Click "Login with GitHub"
+3. Click "+ New Project"
+4. Select "Deploy from GitHub repo"
+5. Choose `privatebtc-backend`
+6. Click "Deploy Now"
+7. Go to Settings → Generate Domain
 
-## Step 4: Test
-Your app will be at: `https://privatebtc-backend-XXXX.onrender.com`
+✅ Done! Your app is live!
 
-Test health:
+---
+
+## Method 2: Railway CLI (Fastest - 1 minute!)
+
+```powershell
+# Install Railway CLI
+npm install -g @railway/cli
+
+# Login
+railway login
+
+# Deploy
+cd c:\Users\sl\OneDrive\Documents\Hackathons\starknet\privatebtc-backend
+railway init
+railway up
+
+# Get URL
+railway domain
 ```
-https://your-app-url.onrender.com/health
+
+✅ **That's it!** 
+
+---
+
+## Test Your Deployment
+
+```powershell
+$url = "https://your-app.up.railway.app"
+Invoke-RestMethod -Uri "$url/health"
 ```
 
-## That's it! 🚀
+---
 
-Full guide: See DEPLOYMENT.md
+## Why Railway?
+
+- ✅ $5 free credit/month
+- ✅ No spin-down (always fast!)
+- ✅ Persistent database
+- ✅ Auto-deploys on git push
+
+**Perfect for hackathons!** 🚀
+
+---
+
+Full guide: See RAILWAY_DEPLOYMENT.md
