@@ -81,14 +81,7 @@ bridgeRouter.post('/detect-lock', strictLimiter, validateBody(['address', 'amoun
             });
         }
 
-        if (simulate === true) {
-            const simulatedData = BitcoinSignetService.simulateLock(address, amountSats);
-            return res.json({
-                success: true,
-                data: simulatedData,
-            });
-        }
-
+        // Real detection only - no simulator branch
         const detection = await BitcoinSignetService.detectLock(address, amountSats);
 
         res.json({

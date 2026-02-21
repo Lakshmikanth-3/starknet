@@ -23,7 +23,7 @@ export function Footer() {
                         </a>
                     </div>
                     <div>
-                        <span className="text-zinc-500">MockBTC Token:</span>{" "}
+                        <span className="text-zinc-500">Shielded Asset (sBTC):</span>{" "}
                         <a
                             href={`https://sepolia.voyager.online/contract/${MOCKBTC_ADDR}`}
                             target="_blank" rel="noreferrer"

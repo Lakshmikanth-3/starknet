@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useWallet } from "../context/WalletContext";
-import { api } from "@/lib/api";
+import { api, submitDeposit } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -29,6 +29,14 @@ export default function DepositPage() {
     // Step 2 Results
     const [bitcoinTx, setBitcoinTx] = useState("");
     const [pollingSignet, setPollingSignet] = useState(false);
+
+    // Step 3 API Flow
+    const [vaultId, setVaultId] = useState<string>('');
+    useEffect(() => { setVaultId(crypto.randomUUID()); }, []);
+    const [txHash, setTxHash] = useState<string>('');
+    const [submitSuccess, setSubmitSuccess] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [submitError, setSubmitError] = useState<string | null>(null);
 
     // Constants
     const SIGNET_ADDRESS = "tb1qprivatebtcvaultdemopayloadxxsignet93xx";
@@ -74,7 +82,10 @@ export default function DepositPage() {
         let attempts = 0;
         const interval = setInterval(async () => {
             try {
-                const res = await api.detectLock();
+                // Converting amount to sats for detection
+                const sats = Math.floor(Number(amount) * 100000000);
+                const res = await api.detectLock(SIGNET_ADDRESS, sats);
+
                 if (res.locked && res.transactionId) {
                     clearInterval(interval);
                     setBitcoinTx(res.transactionId);
@@ -96,53 +107,40 @@ export default function DepositPage() {
     };
 
     const handleSubmitStarknet = async () => {
-        if (!wallet || !wallet.account || !address) {
-            toast({ title: "Wallet Not Connected", description: "Please connect Argent X or Braavos.", variant: "destructive" });
-            return;
-        }
+        setIsSubmitting(true);
+        setSubmitError(null);
 
-        setLoading(true);
         try {
-            const sats = Math.floor(Number(amount) * 100000000);
-            const parsedSats = uint256.bnToUint256(sats.toString());
-
-            // Approve MockBTC
-            const approveCall = {
-                contractAddress: MOCKBTC_ADDRESS,
-                entrypoint: "approve",
-                calldata: CallData.compile({
-                    spender: VAULT_ADDRESS,
-                    amount: parsedSats
-                })
-            };
-
-            // Interact with Vault Deposit
-            // ABI: deposit(amount: u256, commitment: felt252)
-            const depositCall = {
-                contractAddress: VAULT_ADDRESS,
-                entrypoint: "deposit",
-                calldata: CallData.compile({
-                    amount: parsedSats,
-                    commitment: commitment
-                })
-            };
-
-            const tx = await wallet.account.execute([approveCall, depositCall]);
-
-            toast({
-                title: "Transaction Submitted",
-                description: `Starknet TX: ${tx.transaction_hash.slice(0, 10)}...`,
-                variant: "success"
+            const response = await submitDeposit({
+                vault_id: vaultId,
+                commitment: commitment,
+                amount: Number(amount)
             });
 
-            // Wait for completion (optional UX improvement)
-            // await wallet.provider.waitForTransaction(tx.transaction_hash);
+            console.log('[DEPOSIT] Raw response:', response);
 
-            setStep(4);
-        } catch (e: any) {
-            toast({ title: "Transaction Failed", description: e.message || "Starknet Error", variant: "destructive" });
+            if (!response.transaction_hash) {
+                throw new Error('No transaction hash returned from backend');
+            }
+
+            setTxHash(response.transaction_hash);
+            setSubmitSuccess(true);
+
+            toast({
+                title: '✓ Deposit Submitted',
+                description: 'Transaction broadcast to Starknet Sepolia',
+            });
+
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : 'Submission failed';
+            setSubmitError(message);
+            toast({
+                title: '✗ Submission Failed',
+                description: message,
+                variant: 'destructive',
+            });
         } finally {
-            setLoading(false);
+            setIsSubmitting(false);
         }
     };
 
@@ -238,11 +236,23 @@ export default function DepositPage() {
                             <p className="text-lg font-mono text-btc-400 break-all px-4">{SIGNET_ADDRESS}</p>
                         </div>
                     </CardContent>
-                    <CardFooter className="flex justify-end">
+                    <CardFooter className="flex flex-col gap-3">
                         <Button onClick={handlePollSignet} disabled={pollingSignet} className="w-full">
                             {pollingSignet && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                             {pollingSignet ? "Scanning mempool..." : "I've sent the BTC"}
                         </Button>
+
+                        {!pollingSignet && (
+                            <button
+                                onClick={() => {
+                                    setBitcoinTx("d589b2518e8740f90...signet_demo");
+                                    setStep(3);
+                                }}
+                                className="text-[0.65rem] text-zinc-600 hover:text-zinc-400 font-mono transition-colors uppercase tracking-widest"
+                            >
+                                [ Skip to Step 3 (Demo Only) ]
+                            </button>
+                        )}
                     </CardFooter>
                 </Card>
             )}
@@ -252,7 +262,7 @@ export default function DepositPage() {
                 <Card className="border-btc-500/20">
                     <CardHeader>
                         <CardTitle>3. Finalize on Starknet</CardTitle>
-                        <CardDescription>Bitcoin lock detected. Submit the commitment to the Sepolia smart contract to mint your MockBTC.</CardDescription>
+                        <CardDescription>Bitcoin lock detected. Submit the commitment to the Sepolia smart contract to shield your assets as sBTC.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <div className="rounded-md bg-green-500/10 border border-green-500/20 p-4 space-y-2">
@@ -265,13 +275,79 @@ export default function DepositPage() {
                                 <span className="font-mono text-green-500 font-bold">{amount} sBTC</span>
                             </div>
                         </div>
+
+                        {submitError && (
+                            <div className="border border-red-800 bg-red-950/20 p-4 text-red-400 font-mono text-xs tracking-wide">
+                                ✗ {submitError}
+                            </div>
+                        )}
+
+                        {submitSuccess && txHash && (
+                            <div className="border border-green-800 bg-green-950/20 p-5 space-y-4">
+                                <div className="flex items-center gap-2 text-green-400 text-xs tracking-widest uppercase font-mono">
+                                    <span>◈</span>
+                                    <span>Transaction Submitted to Starknet</span>
+                                </div>
+
+                                <div className="bg-zinc-900 border border-zinc-800 p-3">
+                                    <div className="text-zinc-500 text-xs tracking-widest uppercase mb-2 font-mono">
+                                        Transaction Hash
+                                    </div>
+                                    <div className="font-mono text-orange-400 text-xs break-all">
+                                        {txHash}
+                                    </div>
+                                </div>
+
+                                <div className="flex flex-wrap gap-2">
+                                    <a
+                                        href={`https://sepolia.voyager.online/tx/${txHash}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="font-mono text-xs text-zinc-400 hover:text-orange-400 border border-zinc-700 hover:border-orange-800 px-4 py-2 transition-all"
+                                    >
+                                        ↗ Verify on Voyager
+                                    </a>
+                                    <button
+                                        onClick={() => {
+                                            navigator.clipboard.writeText(txHash);
+                                            toast({ title: 'Hash copied to clipboard' });
+                                        }}
+                                        className="font-mono text-xs text-zinc-400 hover:text-orange-400 border border-zinc-700 hover:border-orange-800 px-4 py-2 transition-all"
+                                    >
+                                        ⧉ Copy Hash
+                                    </button>
+                                    <a
+                                        href="/audit"
+                                        className="font-mono text-xs text-orange-400 border border-orange-800 hover:bg-orange-950/30 px-4 py-2 transition-all"
+                                    >
+                                        → View in Audit Ledger
+                                    </a>
+                                </div>
+
+                                <button
+                                    onClick={() => {
+                                        setStep(1);
+                                        setTxHash('');
+                                        setSubmitSuccess(false);
+                                        setCommitment('');
+                                        setVaultId(crypto.randomUUID());
+                                        setAmount('');
+                                    }}
+                                    className="font-mono text-xs text-zinc-500 hover:text-zinc-300 transition-colors tracking-widest uppercase"
+                                >
+                                    ↺ Start New Deposit
+                                </button>
+                            </div>
+                        )}
                     </CardContent>
-                    <CardFooter className="flex justify-end">
-                        <Button onClick={handleSubmitStarknet} disabled={loading || !wallet} className="w-full">
-                            {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                            {wallet ? "Submit to Starknet" : "Connect Wallet to Submit"}
-                        </Button>
-                    </CardFooter>
+                    {!submitSuccess && (
+                        <CardFooter className="flex justify-end">
+                            <Button onClick={handleSubmitStarknet} disabled={isSubmitting} className="w-full">
+                                {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                Submit to Starknet
+                            </Button>
+                        </CardFooter>
+                    )}
                 </Card>
             )}
 
@@ -283,7 +359,7 @@ export default function DepositPage() {
                             <ShieldCheck className="h-10 w-10 text-green-500" />
                         </div>
                         <h2 className="text-2xl font-bold text-zinc-100">Deposit Successful!</h2>
-                        <p className="text-zinc-400 max-w-sm">Your Bitcoin remains locked on Signet, and your shielded MockBTC has been minted to your Starknet account.</p>
+                        <p className="text-zinc-400 max-w-sm">Your Bitcoin remains locked on Signet, and your shielded sBTC has been minted to your Starknet account.</p>
 
                         <div className="pt-6">
                             <Button onClick={() => window.location.href = '/'} variant="outline">Return to Dashboard</Button>

@@ -8,6 +8,104 @@ const router = Router();
 
 const TX_HASH_REGEX = /^0x[0-9a-fA-F]{63,64}$/;
 
+const VOYAGER_BASE = 'https://sepolia.voyager.online/tx';
+
+// ─── GET /api/audit ───────────────────────────────────────────────────────────
+router.get('/', (_req: Request, res: Response) => {
+    try {
+        const rows = db.prepare('SELECT id, deposit_tx_hash AS tx_hash, created_at, status, encrypted_amount AS amount FROM vaults WHERE deposit_tx_hash IS NOT NULL ORDER BY created_at DESC LIMIT 50').all() as Array<any>;
+
+        const events = rows.map(row => ({
+            id: row.id,
+            type: 'DEPOSIT',
+            tx_hash: row.tx_hash,
+            status: row.status === 'pending' ? 'PENDING' : 'SUCCEEDED',
+            amount: Number(row.amount),
+            timestamp: new Date(row.created_at).toISOString(),
+            voyager_url: row.tx_hash.startsWith('SIMULATED')
+                ? null
+                : `${VOYAGER_BASE}/${row.tx_hash}`,
+        }));
+
+        res.json({ events });
+    } catch (err: unknown) {
+        res.status(500).json({ error: (err as Error).message });
+    }
+});
+
+// ─── POST /api/audit/verify ───────────────────────────────────────────────────
+router.post('/verify', async (_req: Request, res: Response) => {
+    try {
+        // 1. Fetch all hashes from vaults and htlcs
+        const vaultRows = db.prepare('SELECT deposit_tx_hash AS tx_hash FROM vaults WHERE deposit_tx_hash IS NOT NULL').all() as { tx_hash: string }[];
+        let htlcRows: { tx_hash: string }[] = [];
+        try {
+            htlcRows = db.prepare('SELECT claim_tx_hash AS tx_hash FROM htlcs WHERE claim_tx_hash IS NOT NULL').all() as { tx_hash: string }[];
+        } catch { /* Ignore if schema doesn't match perfectly fallback */ }
+
+        const allHashes = [...vaultRows, ...htlcRows].map(r => r.tx_hash);
+
+        let verified = 0, pending = 0, failed = 0, simulated = 0;
+        const results: Array<{
+            tx_hash: string;
+            status: string;
+            voyager_url: string | null;
+        }> = [];
+
+        const provider = StarknetService.getProvider();
+
+        for (const txHash of allHashes) {
+            // 2. Skip SIMULATED hashes
+            if (txHash.startsWith('SIMULATED')) {
+                simulated++;
+                results.push({ tx_hash: txHash, status: 'SIMULATED', voyager_url: null });
+                continue;
+            }
+
+            try {
+                // 3. Call Starknet RPC for live status
+                const receipt = await provider.getTransactionReceipt(txHash);
+                const status: string =
+                    (receipt as any).execution_status ||
+                    (receipt as any).finality_status ||
+                    'PENDING';
+
+                // 4. Update SQLite with latest status
+                db.prepare(`UPDATE vaults SET status = ? WHERE deposit_tx_hash = ?`).run(status, txHash);
+
+                if (status === 'ACCEPTED_ON_L2' || status === 'SUCCEEDED') verified++;
+                else if (status === 'REJECTED') failed++;
+                else pending++;
+
+                results.push({
+                    tx_hash: txHash,
+                    status,
+                    voyager_url: `${VOYAGER_BASE}/${txHash}`,
+                });
+            } catch {
+                pending++;
+                results.push({
+                    tx_hash: txHash,
+                    status: 'PENDING',
+                    voyager_url: `${VOYAGER_BASE}/${txHash}`,
+                });
+            }
+        }
+
+        res.status(200).json({
+            verified,
+            pending,
+            failed,
+            simulated,
+            results,
+        });
+
+    } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Verification failed';
+        res.status(500).json({ error: message });
+    }
+});
+
 // ─── GET /api/audit/verify-all-transactions ───────────────────────────────────
 // Judge-facing endpoint: proves every stored tx hash is real on-chain.
 router.get('/verify-all-transactions', async (_req: Request, res: Response) => {

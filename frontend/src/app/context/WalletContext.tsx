@@ -30,7 +30,8 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
                 if (connectedWallet.isConnected) {
                     setWallet(connectedWallet);
                     // @ts-ignore
-                    setAddress(connectedWallet.selectedAddress || null);
+                    const addr = connectedWallet.selectedAddress || (connectedWallet.account && connectedWallet.account.address);
+                    setAddress(addr || null);
                 }
             }
         } catch (e) {
@@ -57,7 +58,8 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
                     if (connectedWallet.isConnected) {
                         setWallet(connectedWallet);
                         // @ts-ignore
-                        setAddress(connectedWallet.selectedAddress || null);
+                        const addr = connectedWallet.selectedAddress || (connectedWallet.account && connectedWallet.account.address);
+                        setAddress(addr || null);
                     }
                 }
             } catch (e) {

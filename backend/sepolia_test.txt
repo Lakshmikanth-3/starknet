@@ -1,9 +1,0 @@
-﻿Testing Sepolia Connection...
-RPC URL: https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_7/PoSTfSa4MmSbEbXRWyHoQ
-Account: 0x040b5d051f333646dda1b93a85419ba12d98a7e19a8d95ee638a8fef6ea15f4c
-Private Key Set: true
-
-1. Testing RPC endpoint...
-Γ£à Chain ID: 0x534e5f5345504f4c4941
-
-2. Testing account nonce...

@@ -5,7 +5,7 @@
  * Goal: Detect native BTC locks on Signet for trust-minimized bridging.
  */
 
-import fetch from 'node-fetch';
+// Native fetch is available in Node 18+
 import crypto from 'crypto';
 
 const MEMPOOL_BASE = 'https://mempool.space/signet/api';

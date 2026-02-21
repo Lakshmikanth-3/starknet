@@ -47,15 +47,6 @@ export interface DetectLockResponse {
     status: string;
 }
 
-export interface AuditEvent {
-    id: number;
-    timestamp: number;
-    eventType: string;
-    txHash: string;
-    status: 'success' | 'pending' | 'failed';
-    details: string;
-}
-
 export interface HealthResponse {
     status: string;
     starknet: {
@@ -73,4 +64,35 @@ export interface HealthResponse {
         connected: boolean;
     };
     timestamp: number;
+}
+
+export interface DepositResponse {
+    transaction_hash: string;
+    status: string;
+    vault_id: string;
+    timestamp: string;
+}
+
+export interface AuditVerifyResult {
+    tx_hash: string;
+    status: string;
+    voyager_url: string | null;
+}
+
+export interface AuditVerifyResponse {
+    verified: number;
+    pending: number;
+    failed: number;
+    simulated: number;
+    results: AuditVerifyResult[];
+}
+
+export interface AuditEvent {
+    id: string;
+    type: 'DEPOSIT' | 'WITHDRAWAL' | 'HTLC_CLAIM' | 'HTLC_REFUND';
+    tx_hash: string;
+    status: string;
+    amount: number;
+    timestamp: string;
+    voyager_url: string | null;
 }
