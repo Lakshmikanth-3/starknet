@@ -1,0 +1,9 @@
+{
+    "sepolia": {
+        "my_sepolia_wallet": {
+            "address": "0x0054078d8ca0fe77c572ad15021a8bcc85b84f30a56a4a4e9ff721a0ba012ef1",
+            "private_key": "0x06a45dc773c07770a783ccd7305ba630f9aeb808695e7fce522a747b102d78c6",
+            "deployed": true
+        }
+    }
+}

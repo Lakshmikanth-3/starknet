@@ -1,0 +1,4 @@
+﻿≡ƒöî Connecting to Sepolia...
+≡ƒôí RPC: https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_7/PoSTfSa4MmSbEbXRWyHoQ
+Γ£à STRK Balance: 0 (raw)
+Γ£à STRK Balance: 0 STRK

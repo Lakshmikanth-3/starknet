@@ -1,0 +1,42 @@
+
+══════════════════════════════════════════════════════════
+  PrivateBTC Vault — Integration Tests
+══════════════════════════════════════════════════════════
+
+▶ 1. GET /health — RPC live, block number returned
+  ✅ PASS — blockNumber = 6717097
+
+▶ 2. POST /api/commitment/create — returns commitment + nullifier_hash
+  ✅ PASS — commitment = 0x37dfb110efb1fe07ba…  nullifier = 0x2f9d5cf5996066e74e…
+
+▶ 3. POST /api/htlc/create using commitment — returns htlcId + preimage
+  ✅ PASS — htlcId = 20ae5598-2911-4e4c…
+
+▶ 4. POST /api/htlc/claim (correct preimage) — status: claimed
+  ✅ PASS — HTLC claimed successfully
+
+▶ 5. POST /api/htlc/claim again (same htlcId) — must return 409
+  ✅ PASS — 409 Already claimed — double-spend prevented
+
+▶ 6. POST /api/htlc/claim (wrong preimage on fresh HTLC) — must return 401
+  ✅ PASS — 401 Invalid preimage — hashlock verification working
+
+▶ 7. POST /api/htlc/refund (before timelock) — must return 403
+  ✅ PASS — 403 Timelock not expired — time-lock enforcement working
+
+▶ 8. GET /api/bridge/btc-status — check real Bitcoin Signet connection
+  ✅ PASS — Signet height = 292365
+
+▶ 9. POST /api/bridge/detect-lock (simulated) — returns lock event
+  ✅ PASS — Simulated lock detected: SIMULATED_53169a08fa281e87546c1a7bebccd964
+
+▶ 10. POST /api/sharp/submit — returns jobKey for ZK-proof
+  ✅ PASS — Proof submitted. Job key = SIMULATED-JOB-96e9ab5f-2a04-4a68-8186-cbbced9009aa
+
+▶ 11. GET /api/sharp/history — verify database persistence
+  ✅ PASS — Found 2 previous proof submissions in DB
+
+══════════════════════════════════════════════════════════
+  Results: 11/11 passed   0 failed
+══════════════════════════════════════════════════════════
+

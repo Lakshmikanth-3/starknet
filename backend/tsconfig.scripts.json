@@ -1,0 +1,14 @@
+{
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "rootDir": ".",
+        "outDir": "./dist-scripts",
+        "module": "ESNext",
+        "moduleResolution": "node",
+        "esModuleInterop": true
+    },
+    "include": [
+        "src/**/*",
+        "scripts/**/*"
+    ]
+}

@@ -1,0 +1,15 @@
+🔐 Testing ZK Proof Flow...
+👤 User: 0x123...abc
+💰 Amount: 1.5 BTC
+🎲 Randomness (Felt): 114310041880058519712776048616835094302177620153854763565239439873655218842
+❌ Test Failed: SyntaxError: Cannot convert 0x123...abc to a BigInt
+    at BigInt (<anonymous>)
+    at Function.generateCommitment (C:\Users\sl\OneDrive\Documents\Hackathons\starknet\privatebtc-backend\src\services\CryptoService.ts:40:33)
+    at main (C:\Users\sl\OneDrive\Documents\Hackathons\starknet\privatebtc-backend\scripts\test_proof_flow.ts:17:42)
+    at <anonymous> (C:\Users\sl\OneDrive\Documents\Hackathons\starknet\privatebtc-backend\scripts\test_proof_flow.ts:45:1)
+    at Object.<anonymous> (C:\Users\sl\OneDrive\Documents\Hackathons\starknet\privatebtc-backend\scripts\test_proof_flow.ts:45:6)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object.transformer (C:\Users\sl\OneDrive\Documents\Hackathons\starknet\privatebtc-backend\node_modules\tsx\dist\register-D46fvsV_.cjs:3:1104)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:328:14)

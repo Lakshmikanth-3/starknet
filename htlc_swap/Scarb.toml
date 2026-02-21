@@ -1,0 +1,12 @@
+[package]
+name = "htlc_swap"
+version = "0.1.0"
+edition = "2023_11"
+
+[dependencies]
+starknet = "2.8.2"
+openzeppelin = "0.15.0"
+
+[[target.starknet-contract]]
+sierra = true
+casm = true

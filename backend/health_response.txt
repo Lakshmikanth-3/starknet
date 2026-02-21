@@ -1,0 +1,1 @@
+﻿{"status":"error","error":"Failed to get block number: fetch failed","timestamp":1771572747440}

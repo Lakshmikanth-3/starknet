@@ -1,0 +1,14 @@
+{
+  "network": "devnet-local",
+  "deployedAt": "2026-02-11T15:20:39Z",
+  "contracts": {
+    "MockBTC": {
+      "classHash": "0x04dbf6009feb48d7a1100d9c5aeb7607f7dfc02d8f984fe7f8ac8d7d79a5189b",
+      "address": ""
+    },
+    "PrivateBTCVault": {
+      "classHash": "0x067f2255713ea2c7abdafcfa8978013c0856e2f77841432e1b9598a66b0df9a2",
+      "address": ""
+    }
+  }
+}

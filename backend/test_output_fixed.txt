@@ -1,0 +1,185 @@
+﻿
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+  PrivateBTC Vault ΓÇö Integration Tests
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+
+Γû╢ 1. GET /health ΓÇö RPC live, block number returned
+node.exe :   Γ¥î FAIL 
+ΓÇö Unexpected 
+exception: request to 
+http://localhost:3001/
+health failed, 
+reason:  
+At line:1 char:1
++ & "C:\Program Files\
+nodejs/node.exe" 
+"C:\Program 
+Files\nodejs/node_mo 
+...
++ ~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
+~~~~~
+    + CategoryInfo    
+          : 
+NotSpecifi    ed: (  
+Γ¥î FAIL ΓÇ    ö 
+...iled, reason:      
+:String) [], Rem    
+oteException
+    + 
+FullyQualifiedEr    
+rorId : NativeComm    
+andError
+ 
+
+Γû╢ 2. POST /api/commitment/create ΓÇö returns commitment + nullifier_hash
+  Γ¥î FAIL ΓÇö 
+Unexpected exception: 
+request to http://loca
+lhost:3001/api/commitm
+ent/create failed, 
+reason:  
+
+Γû╢ 3. POST /api/htlc/create using commitment ΓÇö returns htlcId + preimage
+  Γ¥î FAIL ΓÇö 
+Unexpected exception: 
+request to http://loca
+lhost:3001/api/htlc/cr
+eate failed, reason:  
+
+Γû╢ 4. POST /api/htlc/claim (correct preimage) ΓÇö status: claimed
+  Γ¥î FAIL ΓÇö 
+htlcId/preimage not 
+set (test 3 failed?) 
+
+Γû╢ 5. POST /api/htlc/claim again (same htlcId) ΓÇö must return 409
+  Γ¥î FAIL ΓÇö 
+htlcId/preimage not 
+set 
+
+Γû╢ 6. POST /api/htlc/claim (wrong preimage on fresh HTLC) ΓÇö must return 401
+  Γ¥î FAIL ΓÇö 
+Unexpected exception: 
+request to http://loca
+lhost:3001/api/htlc/cr
+eate failed, reason:  
+
+Γû╢ 7. POST /api/htlc/refund (before timelock) ΓÇö must return 403
+  Γ¥î FAIL ΓÇö 
+Unexpected exception: 
+request to http://loca
+lhost:3001/api/htlc/cr
+eate failed, reason:  
+
+Γû╢ 8. GET /api/bridge/btc-status ΓÇö check real Bitcoin Signet connection
+  Γ¥î FAIL ΓÇö 
+Unexpected exception: 
+request to http://loca
+lhost:3001/api/bridge/
+btc-status failed, 
+reason:  
+
+Γû╢ 9. POST /api/bridge/detect-lock (simulated) ΓÇö returns lock event
+  Γ¥î FAIL ΓÇö 
+Unexpected exception: 
+request to http://loca
+lhost:3001/api/bridge/
+detect-lock failed, 
+reason:  
+
+Γû╢ 10. POST /api/sharp/submit ΓÇö returns jobKey for ZK-proof
+  Γ¥î FAIL ΓÇö 
+Unexpected exception: 
+request to http://loca
+lhost:3001/api/sharp/s
+ubmit failed, reason: 
+ 
+
+Γû╢ 11. GET /api/sharp/history ΓÇö verify database persistence
+  Γ¥î FAIL ΓÇö 
+Unexpected exception: 
+request to http://loca
+lhost:3001/api/sharp/h
+istory failed, 
+reason:  
+
+Γû╢ 12. Malformed JSON Body ΓÇö must return 400
+  Γ¥î FAIL ΓÇö 
+Unexpected exception: 
+request to http://loca
+lhost:3001/api/htlc/cr
+eate failed, reason:  
+
+Γû╢ 13. Validation Middleware: Missing Field ΓÇö must return 400
+  Γ¥î FAIL ΓÇö 
+Unexpected exception: 
+request to http://loca
+lhost:3001/api/htlc/cr
+eate failed, reason:  
+
+Γû╢ 14. Payload Size Limit (>50kb) ΓÇö must return 413
+  Γ¥î FAIL ΓÇö 
+Unexpected exception: 
+request to http://loca
+lhost:3001/api/htlc/cr
+eate failed, reason:  
+
+Γû╢ 15. Invalid Starknet Address format ΓÇö must return 400
+  Γ¥î FAIL ΓÇö 
+Unexpected exception: 
+request to http://loca
+lhost:3001/api/vault/b
+alance/0xABC failed, 
+reason:  
+
+Γû╢ 16. Invalid Bitcoin Address format ΓÇö must return 400
+  Γ¥î FAIL ΓÇö 
+Unexpected exception: 
+request to http://loca
+lhost:3001/api/bridge/
+watch-address failed, 
+reason:  
+
+Γû╢ 17. Route Not Found (404) ΓÇö custom JSON response
+  Γ¥î FAIL ΓÇö 
+Unexpected exception: 
+request to http://loca
+lhost:3001/api/non/exi
+stent/route failed, 
+reason:  
+
+Γû╢ 18. Method Not Allowed (405) ΓÇö custom JSON response
+  Γ¥î FAIL ΓÇö 
+Unexpected exception: 
+request to http://loca
+lhost:3001/api/htlc/cr
+eate failed, reason:  
+
+Γû╢ 19. Concurrency Lock: Double Claim ΓÇö must return 409 locked
+  Γ¥î FAIL ΓÇö 
+Unexpected exception: 
+request to http://loca
+lhost:3001/api/htlc/cr
+eate failed, reason:  
+
+Γû╢ 20. RPC Resilience: Health Circuit State ΓÇö verified
+  Γ¥î FAIL ΓÇö 
+Unexpected exception: 
+request to http://loca
+lhost:3001/health 
+failed, reason:  
+
+Γû╢ 21. API Rate Limiting (Strict) ΓÇö must return 429
+  ΓÅ│ Hammering /api/commitment/create (strict) with 300 reqs to trigger 429...
+  Γ¥î FAIL ΓÇö 
+Unexpected exception: 
+request to http://loca
+lhost:3001/api/commitm
+ent/create failed, 
+reason:  
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+  Results: 0/21 passed   21 failed
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+

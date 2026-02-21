@@ -1,0 +1,51 @@
+
+import http from 'http';
+import fs from 'fs';
+import path from 'path';
+
+function get(path: string): Promise<any> {
+    return new Promise((resolve, reject) => {
+        const req = http.request({
+            hostname: 'localhost',
+            port: 3001,
+            path: path,
+            method: 'GET'
+        }, (res) => {
+            let buffer = '';
+            res.on('data', chunk => buffer += chunk);
+            res.on('end', () => resolve(JSON.parse(buffer)));
+        });
+        req.on('error', reject);
+        req.end();
+    });
+}
+
+async function run() {
+    console.log('🔍 Verifying Vault Persistence...');
+    try {
+        const id = fs.readFileSync(path.join(__dirname, 'vault_id.txt'), 'utf8').trim();
+        console.log(`Looking for Vault: ${id}`);
+
+        const res = await get('/api/vaults/0xPERSISTENCE_TEST');
+
+        if (res.success) {
+            const vault = res.data.find((v: any) => v.vaultId === id);
+            if (vault) {
+                console.log('✅ SUCCESS: Vault found after restart!');
+                console.log(`   ID: ${vault.vaultId}`);
+                console.log(`   Status: ${vault.status}`);
+            } else {
+                console.error('❌ FAILED: Vault not found in list.');
+                process.exit(1);
+            }
+        } else {
+            console.error('❌ API Error:', res.error);
+            process.exit(1);
+        }
+    } catch (e) {
+        console.error('❌ Error reading ID file or connecting:', e);
+        process.exit(1);
+    }
+}
+
+run();

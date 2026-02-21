@@ -1,0 +1,35 @@
+{
+  "alpha-goerli": {},
+  "alpha-sepolia": {
+    "my_deployer": {
+      "address": "0x693293c4471b06414fbd7045501bc764ec5604f1f370fd9771254990b7df4ea",
+      "class_hash": "0x5b4b537eaa2399e3aa99c4e2e0208ebd6c71bc1467938cd52c798c601e43564",
+      "deployed": false,
+      "legacy": false,
+      "private_key": "0x20ab0ca1302d50279aac9da837b976c98f4187927fc2bfab33436dc4c23a77c",
+      "public_key": "0x6fea5fc6eb91b9362bd028bd9ddadc29ed0f81d5d20b4c52a4dee2863d3b41",
+      "salt": "0x8aaa01c17532efa",
+      "type": "open_zeppelin"
+    },
+    "my_deployer_2": {
+      "address": "0x9e7957bace783e813c64b093c896641811fa9d1b9cf0e248fa66336e61ff2c",
+      "class_hash": "0x5b4b537eaa2399e3aa99c4e2e0208ebd6c71bc1467938cd52c798c601e43564",
+      "deployed": false,
+      "legacy": false,
+      "private_key": "0x41bfe599bebacb181437b2e57936945bd9fbee07c28ed13c838c57db66fa9c6",
+      "public_key": "0x7ccc8080abb29585eb7d26835bfb210fc1658764b4ad7586550992852a146",
+      "salt": "0x5e099340327f0b33",
+      "type": "open_zeppelin"
+    },
+    "sepolia": {
+      "address": "0x40b5d051138e8991c98d1402a802d90aa872c4a484a6c182f9cda718c5b7d8b",
+      "class_hash": "0x5b4b537eaa2399e3aa99c4e2e0208ebd6c71bc1467938cd52c798c601e43564",
+      "deployed": true,
+      "legacy": false,
+      "private_key": "0x6f5166243f7377cdf38d3adbacfc27d8900d387b2f68087f1dd62e6d3776f48",
+      "public_key": "0x9703eafeb58adbbd88c27b96962fff1812f27ee9e25a48751b0978cf2e6223",
+      "salt": "0x8d33441e1d867a9",
+      "type": "open_zeppelin"
+    }
+  }
+}

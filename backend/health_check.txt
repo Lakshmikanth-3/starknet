@@ -1,0 +1,1 @@
+﻿{"status":"ok","starknet":{"network":"sepolia","blockNumber":6713168,"vaultContractReachable":false,"mockBtcContractReachable":true},"db":{"connected":true,"vaultCount":0},"timestamp":1771573582015}

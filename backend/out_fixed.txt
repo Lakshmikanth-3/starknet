@@ -1,0 +1,77 @@
+﻿≡ƒÜÇ DEPLOYMENT SCRIPT (NETHERMIND RPC)
+≡ƒôª Declaring MockBTC...
+Error declaring mock: Error: fetch failed
+    at RpcChannel2.errorHandler (C:\Users\sl\OneDrive\Documents\Hackathons\starknet\backend\node_modules\starknet\src\channel\rpc_0_7.ts:135:13)
+    at RpcChannel2.fetchEndpoint (C:\Users\sl\OneDrive\Documents\Hackathons\starknet\backend\node_modules\starknet\src\channel\rpc_0_7.ts:159:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Account.estimateDeclareFee (C:\Users\sl\OneDrive\Documents\Hackathons\starknet\backend\node_modules\starknet\src\account\default.ts:203:46)
+    at async Account.getUniversalSuggestedFee (C:\Users\sl\OneDrive\Documents\Hackathons\starknet\backend\node_modules\starknet\src\account\default.ts:780:10)
+    at async Account.declare (C:\Users\sl\OneDrive\Documents\Hackathons\starknet\backend\node_modules\starknet\src\account\default.ts:426:22)
+    at async main (C:\Users\sl\OneDrive\Documents\Hackathons\starknet\backend\scripts\deploy_fresh.ts:23:22)
+node.exe : Error: 
+fetch failed
+At line:1 char:1
++ & "C:\Program Files\
+nodejs/node.exe" 
+"C:\Program 
+Files\nodejs/node_mo 
+...
++ ~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
+~~~~~
+    + CategoryInfo    
+          : NotSpeci  
+  fied: (Error: fet   
+ ch failed:String)    
+ [], RemoteExcept    
+ion
+    + FullyQualifiedE 
+   rrorId : NativeCo  
+  mmandError
+ 
+    at RpcChannel2.err
+orHandler (C:\Users\sl
+\OneDrive\Documents\Ha
+ckathons\starknet\back
+end\node_modules\stark
+net\src\channel\rpc_0_
+7.ts:135:13)
+    at RpcChannel2.fet
+chEndpoint (C:\Users\s
+l\OneDrive\Documents\H
+ackathons\starknet\bac
+kend\node_modules\star
+knet\src\channel\rpc_0
+_7.ts:159:12)
+    at process.process
+TicksAndRejections (no
+de:internal/process/ta
+sk_queues:105:5)
+    at async Account.e
+stimateDeclareFee (C:\
+Users\sl\OneDrive\Docu
+ments\Hackathons\stark
+net\backend\node_modul
+es\starknet\src\accoun
+t\default.ts:203:46)
+    at async Account.g
+etUniversalSuggestedFe
+e (C:\Users\sl\OneDriv
+e\Documents\Hackathons
+\starknet\backend\node
+_modules\starknet\src\
+account\default.ts:780
+:10)
+    at async 
+Account.declare (C:\Us
+ers\sl\OneDrive\Docume
+nts\Hackathons\starkne
+t\backend\node_modules
+\starknet\src\account\
+default.ts:426:22)
+    at async main (C:\
+Users\sl\OneDrive\Docu
+ments\Hackathons\stark
+net\backend\scripts\de
+ploy_fresh.ts:23:22)
