@@ -1,0 +1,3 @@
+   Compiling cairo2_proof v0.1.0 (/mnt/c/Users/sl/OneDrive/Documents/Hackathons/starknet/cairo2_proof/Scarb.toml)
+error: unknown compiler for target `executable`
+error: could not compile `cairo2_proof` due to previous error

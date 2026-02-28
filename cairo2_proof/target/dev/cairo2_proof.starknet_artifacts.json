@@ -1,0 +1,1 @@
+{"version":1,"contracts":[{"id":"p62im40c3hakg","package_name":"cairo2_proof","contract_name":"Commitment","module_path":"cairo2_proof::Commitment","artifacts":{"sierra":"cairo2_proof_Commitment.contract_class.json","casm":null}}]}

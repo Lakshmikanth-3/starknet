@@ -1,0 +1,40 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.starknet.io/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Recommended next steps after deploying your first contract
+
+# Introduction
+
+main route where this page is from: https://docs.starknet.io/build/quickstart/next-steps
+
+Welcome to the fifth and final installment of the *Deploy your first contract* guide! 🥇
+
+By now you've successfully declared, deployed, and interacted with the `HelloStarknet`, both on Starknet Sepolia and locally (way to go!).
+This last installment of the series will therefore list the various resources you can dive into next.
+
+## Interactive tutorials
+
+* [Starklings](https://starklings.app/)
+* [Speedrun Stark](https://speedrunstark.com/)
+
+## Essential learning materials
+
+* [Starknet By Example](/build/starknet-by-example/index)
+* [Corelib documentation](/build/corelib/intro)
+* [Cairo Book](https://book.cairo-lang.org)
+* [Starknet protocol](/learn/protocol/intro)
+* [Starknet cheatsheets](/learn/cheatsheets/chain-info)
+* [Starknet Basecamp Hub](https://starknet.notion.site/Starknet-Basecamp-Hub-1541b3c1f49f439da872d3d71647d834)
+
+## Core tools documentations
+
+* [Starknet Foundry](https://foundry-rs.github.io/starknet-foundry)
+* [Scarb](https://docs.swmansion.com/scarb/docs.html)
+* [Starknet Devnet](https://0xspaceshard.github.io/starknet-devnet/docs/intro)
+
+# Summary
+
+Good luck and welcome aboard! We can't wait to see the new and innovative things you'll bring to Starknet 🌟
+
+The journey from your first contract to becoming a Starknet expert is exciting. Take it step by step, stay curious, and don't hesitate to ask for help along the way!

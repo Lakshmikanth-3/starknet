@@ -1,0 +1,109 @@
+Prove `scarb execute` output using Stwo prover.
+
+Usage: scarb-prove [OPTIONS]
+
+Options:
+  -p, --package <SPEC>
+          Packages to run this command on, can be a concrete package name (`foobar`) or a prefix glob (`foo*`)
+          
+          [env: SCARB_PACKAGES_FILTER=]
+          [default: *]
+
+  -w, --workspace
+          Run for all packages in the workspace
+
+      --execution-id <EXECUTION_ID>
+          ID of `scarb execute` *standard* output for given package, for which to generate proof
+
+      --execute
+          Execute the program before proving
+
+      --no-build
+          Do not rebuild the package
+
+  -F, --features <FEATURES>
+          Comma separated list of features to activate
+          
+          [env: SCARB_FEATURES=]
+
+      --all-features
+          Activate all available features
+          
+          [env: SCARB_ALL_FEATURES=]
+
+      --no-default-features
+          Do not activate the `default` feature
+          
+          [env: SCARB_NO_DEFAULT_FEATURES=]
+
+      --executable-name <EXECUTABLE_NAME>
+          Choose build target to run by target name
+
+      --executable-function <EXECUTABLE_FUNCTION>
+          Choose build target to run by function path
+
+      --arguments <ARGUMENTS>
+          Serialized arguments to the executable function
+
+      --arguments-file <ARGUMENTS_FILE>
+          Serialized arguments to the executable function from a file
+
+      --output <OUTPUT>
+          Desired execution output, either default Standard or CairoPie
+
+          Possible values:
+          - cairo-pie: Output in Cairo PIE (Program Independent Execution) format
+          - standard:  Output in standard format
+          - none:      No output
+
+      --target <TARGET>
+          Execution target
+          
+          [default: standalone]
+
+          Possible values:
+          - bootloader: Bootloader target
+          - standalone: Standalone target
+
+      --print-program-output
+          Whether to print the program outputs
+
+      --print-resource-usage
+          Whether to print detailed execution resources
+
+      --experimental-oracles
+          Enable experimental oracles support
+          
+          [env: SCARB_EXPERIMENTAL_ORACLES=]
+
+      --track-relations
+          Track relations during proving
+
+      --display-components
+          Display components during proving
+
+  -v, --verbose...
+          Increase logging verbosity.
+
+  -q, --quiet...
+          Decrease logging verbosity.
+
+      --no-warnings
+          Decrease logging verbosity, hiding warnings but still showing errors.
+
+      --verbosity <VERBOSITY>
+          Set UI verbosity level by name.
+          
+          [env: SCARB_UI_VERBOSITY=]
+
+          Possible values:
+          - quiet:       Avoid printing anything to standard output
+          - no-warnings: Avoid printing warnings to standard output
+          - normal:      Default verbosity level
+          - verbose:     Print extra information to standard output
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version

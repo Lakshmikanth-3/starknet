@@ -1,0 +1,50 @@
+Execute the main function of a package
+
+Usage: scarb-cairo-run [OPTIONS] [ARGUMENTS]
+
+Arguments:
+  [ARGUMENTS]
+          Program arguments.
+          
+          This should be a JSON array of numbers, decimal bigints or recursive arrays of those. For example, pass `[1]` to the following function `fn main(a: u64)`, or pass `[1, "2"]` to `fn main(a: u64, b: u64)`, or `[1, 2, [3, 4, 5]]` to `fn main(t: (u64, u64), v: Array<u64>)`.
+          
+          [default: []]
+
+Options:
+  -p, --package <SPEC>
+          Packages to run this command on, can be a concrete package name (`foobar`) or a prefix glob (`foo*`)
+          
+          [env: SCARB_PACKAGES_FILTER=]
+          [default: *]
+
+  -w, --workspace
+          Run for all packages in the workspace
+
+      --function <FUNCTION>
+          Specify name of the function to run
+
+      --available-gas <AVAILABLE_GAS>
+          Maximum amount of gas available to the program
+
+      --print-full-memory
+          Print more items in memory
+
+      --no-build
+          Do not rebuild the package
+
+  -v, --verbose...
+          Increase logging verbosity.
+
+  -q, --quiet...
+          Decrease logging verbosity.
+
+      --verbosity <VERBOSITY>
+          Set UI verbosity level by name.
+          
+          [env: SCARB_UI_VERBOSITY=normal]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version

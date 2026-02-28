@@ -1,0 +1,2 @@
+﻿src/app/deposit/page.tsx(119,17): error TS2353: Object literal may only specify known properties, and 'bitcoin_txid' does not exist in type '{ vault_id: string; commitment: string; amount: number; }'.
+src/app/deposit/page.tsx(129,36): error TS2339: Property 'voyager_url' does not exist on type 'DepositResponse'.

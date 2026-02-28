@@ -1,0 +1,26 @@
+{
+  "trace_path": "/mnt/c/Users/sl/OneDrive/Documents/Hackathons/starknet/cairo2_proof/target/execute/cairo2_proof/execution11/trace.bin",
+  "memory_path": "/mnt/c/Users/sl/OneDrive/Documents/Hackathons/starknet/cairo2_proof/target/execute/cairo2_proof/execution11/memory.bin",
+  "pedersen": [
+    {
+      "index": 0,
+      "x": "0x3b2f7b447cad8a0c6972b8cbe32072e3fe6bfbb7a0256d261e2cf2c8519ccd",
+      "y": "0x388b6961be427cc846bac2904c10ab85fba52cf16f84466c2b4e043dcc30f4b"
+    }
+  ],
+  "range_check": [],
+  "range_check96": [],
+  "ecdsa": [],
+  "bitwise": [],
+  "ec_op": [],
+  "keccak": [],
+  "poseidon": [],
+  "add_mod": {
+    "instances": [],
+    "zero_value_address": 218
+  },
+  "mul_mod": {
+    "instances": [],
+    "zero_value_address": 218
+  }
+}

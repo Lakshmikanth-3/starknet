@@ -1,0 +1,12 @@
+[package]
+name = "cairo2_proof"
+version = "0.1.0"
+edition = "2024_07"
+
+[dependencies]
+cairo_execute = "2.12.2"
+
+[cairo]
+enable-gas = false
+
+[[target.executable]]

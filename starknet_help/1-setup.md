@@ -1,0 +1,189 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.starknet.io/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Setting up your development environment
+
+<Warning>
+  If you encounter an issue while following this tutorial, see [Troubleshooting](/build/quickstart/appendix#troubleshooting).
+</Warning>
+
+## Introduction
+
+Welcome to the first installment of the Deploy your first contract guide! 🥇
+
+As a popular phrase (often attributed to Abraham Lincoln) says, "Give me six hours to chop down a tree, and I will spend the first four sharpening the axe".
+The first installment of the series will therefore guide you through setting up your development environment, which will include the three most recommended tools to begin developing on Starknet:
+
+* *Scarb*, a build toolchain and package manager for Cairo and Starknet ecosystems
+
+* *Starknet Foundry*, the go-to framework for building and testing Starknet Smart Contracts
+
+* *Starknet Devnet*, a Rust implementation of a local Starknet node
+
+<Tip>
+  To review all Starknet developer tools, see [Developer tools](/learn/cheatsheets/tools).
+</Tip>
+
+## Setting up your environment on MacOS and Linux
+
+On MacOS and Linux, Scarb, Starknet Foundry and Starknet Devnet can be easily installed using the [Starkup installer](https://github.com/software-mansion/starkup) by running:
+
+```bash  theme={null}
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.starkup.sh | sh
+```
+
+and following the onscreen instructions.
+
+<Note>
+  If you prefer to install the tools manually or encounter issues with Starkup, see [Setting up your environment manually on MacOS and Linux](/build/quickstart/appendix#setting-up-your-environment-manually-on-macos-and-linux).
+</Note>
+
+You can verify that all three tools are installed correctly by running:
+
+```bash  theme={null}
+   scarb --version
+   snforge --version && sncast --version
+   starknet-devnet --version
+```
+
+If the installation was successful, the result should resemble the following:
+
+```console  theme={null}
+scarb 2.11.4 (c0ef5ec6a 2025-04-09)
+cairo: 2.11.4 (https://crates.io/crates/cairo-lang-compiler/2.11.4)
+sierra: 1.7.0
+
+snforge 0.48.1
+sncast 0.48.1
+
+starknet-devnet 0.4.3
+```
+
+<Note>
+  Starkup installs Scarb, Starknet Foundry, and Starknet Devnet on MacOS and Linux via the [`asdf` version manager](https://asdf-vm.com/), which allows to easily switch between their different versions, both globally and per project (see full details in the [`asdf` documentation](https://asdf-vm.com/manage/commands.html) or by running `asdf --help`). Alongside Scarb and Starknet Foundry, Starkup uses `asdf` to install additional useful tools, including the [Universal Sierra Compiler](https://github.com/software-mansion/universal-sierra-compiler), [Cairo Profiler](https://github.com/software-mansion/cairo-profiler), [Cairo Coverage](https://github.com/software-mansion/cairo-coverage), and [CairoLS](https://github.com/software-mansion/cairols).
+
+  If you encounter any issues while using it or have any requests, please help by [submitting an issue](https://github.com/software-mansion/starkup/issues/new).
+</Note>
+
+## Setting up your environment on Windows
+
+Setting up Scarb and Starknet Foundry on Windows requires configuring the Windows Subsystem for Linux (WSL) and installing the tools inside a Linux distribution such as Ubuntu.
+
+### Installing WSL and Ubuntu
+
+1. Open PowerShell as administrator and run:
+
+   ```bash  theme={null}
+   wsl --install
+   ```
+
+   This command installs WSL along with the default Ubuntu distribution. If WSL or virtualization is not yet enabled, reboot and re-run the command as needed.
+
+2. Restart your computer when prompted.
+
+3. After reboot, launch Ubuntu from the Start menu. On the first launch, create a UNIX username and password when prompted.
+
+<Note>
+  If `wsl --install` does not work, enable WSL manually by running:
+
+  ```bash  theme={null}
+  dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+  dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+  ```
+
+  and installing Ubuntu from the [Microsoft Store](https://aka.ms/wslstore).
+</Note>
+
+### Installing prerequisites in Ubuntu
+
+1. Open the Ubuntu terminal and run:
+
+   ```bash  theme={null}
+   sudo apt update
+   sudo apt install -y curl git build-essential
+   ```
+
+### Installing Homebrew
+
+1. Run the Homebrew install script:
+
+   ```bash  theme={null}
+   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+   ```
+
+2. Add Homebrew to your shell environment:
+
+   ```bash  theme={null}
+   echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> ~/.profile
+   source ~/.profile
+   ```
+
+3. Verify that Homebrew was installed correctly:
+
+   ```bash  theme={null}
+   brew --version
+   ```
+
+### Installing `asdf`
+
+<Note>
+  Using `asdf` allows you to easily switch between versions of Scarb, Starknet Foundry, and Starknet Devnet globally or per project.
+</Note>
+
+1. Install `asdf` using Homebrew:
+
+   ```bash  theme={null}
+   brew install asdf
+   ```
+
+2. Add `asdf` to your shell:
+
+   ```bash  theme={null}
+   echo '. "$(brew --prefix asdf)/libexec/asdf.sh"' >> ~/.bashrc
+   source ~/.bashrc
+   ```
+
+3. Verify that `asdf` is installed correctly:
+
+   ```bash  theme={null}
+   asdf --version
+   ```
+
+### Installing Scarb, Starknet Foundry, and Starknet Devnet
+
+1. Add the Scarb plugin and install the latest Scarb version:
+
+   ```bash  theme={null}
+   asdf plugin add scarb
+   asdf install scarb latest
+   asdf set -u scarb latest
+   ```
+
+2. Add the Starknet Foundry plugin and install the latest Starknet Foundry version:
+
+   ```bash  theme={null}
+   asdf plugin add starknet-foundry
+   asdf install starknet-foundry latest
+   asdf set -u starknet-foundry latest
+   ```
+
+3. Add the Starknet Devnet plugin and install the latest Starknet Devnet version:
+
+   ```bash  theme={null}
+   asdf plugin add starknet-devnet
+   asdf install starknet-devnet latest
+   asdf set -u starknet-devnet latest
+   ```
+
+4. Restart your terminal and verify that Scarb, Starknet Foundry, and Starknet Devnet were installed correctly:
+
+   ```bash  theme={null}
+   scarb --version
+   snforge --version && sncast --version
+   starknet-devnet --version
+   ```
+
+   <Tip>
+     If `scarb`, `snforge`, or `starknet-devnet` are not recognized, try running `source ~/.bashrc` or restarting your terminal.
+   </Tip>

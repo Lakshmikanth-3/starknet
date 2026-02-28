@@ -1,0 +1,2 @@
+   Compiling cairo2_proof v0.1.0 (/mnt/c/Users/sl/OneDrive/Documents/Hackathons/starknet/cairo2_proof/Scarb.toml)
+    Finished release target(s) in 7 seconds

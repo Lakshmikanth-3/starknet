@@ -1,0 +1,145 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.starknet.io/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Deploying the HelloStarknet contract on Starknet Sepolia
+
+<Warning>
+  If you encounter an issue while following this tutorial, see [Troubleshooting](/build/quickstart/appendix#troubleshooting).
+</Warning>
+
+## Introduction
+
+Welcome to the fourth installment of the *Deploy your first contract* guide! 🥇
+
+Starknet Sepolia is Starknet's testnet environment designed to provide developers with a testing ground that mirrors the behavior of the Starknet Mainnet while being connected to the Ethereum Sepolia testnet, making it ideal for debugging and optimizing your code before deploying it to production. This installment of the series will therefore guide you through the steps necessary to deploy and interact with the `HelloStarknet` contract on Starknet Sepolia.
+
+## Deploying a new Sepolia account
+
+Similar to interacting with a Starknet Devnet instance, to interact with Starknet Sepolia you first need an account. However, instead fetching a predeployed Sepolia account, we will create a *new* account and deploy it using `sncast` ourselves.
+
+<Note>
+  To learn how to fetch a predeployed Sepolia account, see [Fetching a predeployed Sepolia account](/build/quickstart/appendix#fetching-a-predeployed-sepolia-account).
+</Note>
+
+To create the account's information (private key, address, etc.), navigate into the `hello_starknet` directory created in [Generating `HelloStarknet`](/build/quickstart/hellostarknet#generating-hellostarknet) and run:
+
+```bash  theme={null}
+sncast account create \
+    --network=sepolia \
+    --name=sepolia
+```
+
+When run, the command shows instructions on how to prefund the account before proceeding, which can be done using the [Starknet Sepolia faucet](https://starknet-faucet.vercel.app/).
+
+<Note>
+  Prefunding the account is required because deploying an account involves sending a `DEPLOY_ACCOUNT` transaction, which requires the account to contain enough STRK to pay for the transaction fee.
+</Note>
+
+Once your account is funded, you can deploy it by running:
+
+```bash  theme={null}
+sncast account deploy \
+    --network sepolia \
+    --name sepolia \
+    --silent
+```
+
+If successful, the result should resemble the following:
+
+```console  theme={null}
+Success: Account deployed
+
+Transaction Hash: 0x01340c0328b037bab85d53dd1b3b8040b0e0f4be58a42a94f554c9bf6e5bf30d
+
+To see invocation details, visit:
+transaction: https://sepolia.starkscan.co/tx/0x01340c0328b037bab85d53dd1b3b8040b0e0f4be58a42a94f554c9bf6e5bf30d
+```
+
+## Deploying `HelloStarknet` on Sepolia
+
+Unlike when using a Starknet Devnet instance, there's no need for us to declare `HelloStarknet` on Sepolia as it has already been declared before (remember: declaration is a one-time process for each unique contract code). To verify that, you can try declaring it by navigating into the `hello_starknet` directory created in [Generating `HelloStarknet`](/build/quickstart/hellostarknet#generating-hellostarknet), running:
+
+```bash  theme={null}
+sncast --account=sepolia declare \
+    --contract-name=HelloStarknet \
+    --network=sepolia
+```
+
+The result should resemble to the following:
+
+```console  theme={null}
+command: declare
+error: Transaction execution error = TransactionExecutionErrorData {
+    transaction_index: 0,
+    execution_error: Message(
+        "Class with hash 0x051e0d3b26fb79035afdc64d2214eb18291629b4f2ef132e79c3f3fbe1ba57c4 is already declared."
+    )
+}
+```
+
+With `HelloStarknet` already declared, you can deploy an instance of it by running:
+
+```bash  theme={null}
+sncast --account=sepolia deploy \
+    --class-hash=0x051e0d3b26fb79035afdc64d2214eb18291629b4f2ef132e79c3f3fbe1ba57c4 \
+    --network=sepolia
+```
+
+If successful, the result should resemble the following:
+
+```console  theme={null}
+Success: Deployment completed
+
+Contract Address: 0x05fe561f0907f61b1099ba64ee18a5250606d43d00d4f296ba622d287ceb2538
+Transaction Hash: 0x0723a63261d2df60f571df8a2b8c8c64694278aae66481a0584445c03234d83f
+
+To see deployment details, visit:
+contract: https://sepolia.starkscan.co/contract/0x05fe561f0907f61b1099ba64ee18a5250606d43d00d4f296ba622d287ceb2538
+transaction: https://sepolia.starkscan.co/tx/0x0723a63261d2df60f571df8a2b8c8c64694278aae66481a0584445c03234d83f
+```
+
+<Warning>
+  Your deployed contract's address will be different than the one listed above. Make sure to use the address of your own deployed contract in the following section.
+</Warning>
+
+## Interacting with `HelloStarknet` on Sepolia
+
+Once your instance of `HelloStarknet` is deployed, you can invoke its `increase_balance` function by running:
+
+```bash  theme={null}
+sncast --account=sepolia invoke \
+    --contract-address=<YOUR_CONTRACT_ADDRESS> \
+    --function=increase_balance \
+    --arguments=66 \
+    --network=sepolia
+```
+
+If successful, the result should resemble the following:
+
+```console  theme={null}
+Success: Invoke completed
+
+Transaction Hash: 0x02b900ba6bfb6a7d256d34c5d3a895abbfa0805d23f80253958e101069700020
+
+To see invocation details, visit:
+transaction: https://sepolia.starkscan.co/tx/0x02b900ba6bfb6a7d256d34c5d3a895abbfa0805d23f80253958e101069700020
+```
+
+Once the invoke transaction is accepted on Starknet Sepolia, you can call your deployed contract's `get_balance` function to confirm that your deployed contract's storage — and by extension, the state of Starknet Sepolia — has indeed changed, by running:
+
+```bash  theme={null}
+sncast call \
+    --contract-address=<YOUR_CONTRACT_ADDRESS> \
+    --function=get_balance \
+    --network=sepolia
+```
+
+If all goes well, the result should resemble the following ($66_{10} = 42_{16}$):
+
+```console  theme={null}
+Success: Call completed
+
+Response:     0x42
+Response Raw: [0x42]
+```
