@@ -8,7 +8,7 @@ import { VaultStatus, AuditEvent } from "@/types";
 import { cn } from "@/lib/utils";
 
 const VAULT_ADDRESS = process.env.NEXT_PUBLIC_VAULT_ADDRESS || "0x03e735d12f81f2f4beb45634bef9997ae3bde996c2f84a204957dc5ef2209de2";
-const MOCKBTC_ADDRESS = process.env.NEXT_PUBLIC_MOCK_BTC_ADDRESS || "0x0291c79b16b1541361c8efe84c5558994066948cfe9b7075db781a758c2cec52";
+const SBTC_ADDRESS = process.env.NEXT_PUBLIC_SBTC_ADDRESS || "0x0291c79b16b1541361c8efe84c5558994066948cfe9b7075db781a758c2cec52";
 
 type CheckStatus = 'idle' | 'checking' | 'pass' | 'fail';
 
@@ -155,7 +155,7 @@ export default function Home() {
         <div className="network-divider"></div>
         <div className="network-item">
           <div className="network-key">BTC API</div>
-          <div className="network-val">mempool.space</div>
+          <div className="network-val">Tatum Gateway</div>
         </div>
         <div className="network-divider"></div>
         <div className="network-item">
@@ -182,7 +182,7 @@ export default function Home() {
           <div className="zk-icon">₿</div>
           <div>
             <div className="zk-label">Bitcoin Signet</div>
-            <div className="zk-val live">● Real — mempool.space</div>
+            <div className="zk-val live">● Real — Tatum Gateway</div>
           </div>
         </div>
         <div className="zk-item">
@@ -264,9 +264,9 @@ export default function Home() {
               <div className="copy-hint">↗ Voyager · Starkscan</div>
             </div>
             <div className="contract-item">
-              <div className="contract-label">MockBTC Token · ERC-20 Sepolia</div>
-              <div className="contract-addr tooltip-wrap" onClick={() => copyToClipboard(MOCKBTC_ADDRESS)}>
-                {MOCKBTC_ADDRESS}
+              <div className="contract-label">sBTC Token · ERC-20 Sepolia</div>
+              <div className="contract-addr tooltip-wrap" onClick={() => copyToClipboard(SBTC_ADDRESS)}>
+                {SBTC_ADDRESS}
                 <span className="tooltip">Click to copy</span>
               </div>
               <div className="copy-hint">↗ Verify on Voyager</div>

@@ -47,11 +47,12 @@ function initSchema(db: Database.Database): void {
       status              TEXT NOT NULL DEFAULT 'pending',
       deposit_tx_hash     TEXT,
       withdraw_tx_hash    TEXT,
+      bitcoin_txid        TEXT DEFAULT NULL,
       nullifier_hash      TEXT UNIQUE,
       CHECK(lock_duration_days IN (30, 90, 365)),
       CHECK(status IN ('pending', 'active', 'withdrawn')),
-      CHECK(deposit_tx_hash IS NULL OR length(deposit_tx_hash) >= 65),
-      CHECK(withdraw_tx_hash IS NULL OR length(withdraw_tx_hash) >= 65)
+      CHECK(deposit_tx_hash IS NULL OR (length(deposit_tx_hash) >= 34 AND deposit_tx_hash LIKE '0x%')),
+      CHECK(withdraw_tx_hash IS NULL OR (length(withdraw_tx_hash) >= 34 AND withdraw_tx_hash LIKE '0x%'))
     );
 
     -- ─────────────────────────────────────────────────────
@@ -97,7 +98,7 @@ function initSchema(db: Database.Database): void {
     BEFORE INSERT ON transactions
     BEGIN
       SELECT CASE
-        WHEN NEW.tx_hash NOT GLOB '0x[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*'
+        WHEN NEW.tx_hash NOT LIKE '0x%' OR length(NEW.tx_hash) < 34
         THEN RAISE(ABORT, 'FAKE_TX_HASH: tx_hash must be a real Starknet transaction hash (0x + 63-64 hex chars)')
       END;
     END;
@@ -163,6 +164,14 @@ function initSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_sharp_job_key ON sharp_proofs(job_key);
     CREATE INDEX IF NOT EXISTS idx_sharp_status  ON sharp_proofs(status);
   `);
+
+  try {
+    db.exec(`ALTER TABLE vaults ADD COLUMN bitcoin_txid TEXT DEFAULT NULL`);
+  } catch (e: any) {
+    if (!e.message.includes('duplicate column name')) {
+      console.error('Migration error:', e.message);
+    }
+  }
 }
 
 // Initialize on import

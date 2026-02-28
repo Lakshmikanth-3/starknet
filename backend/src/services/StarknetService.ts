@@ -6,7 +6,7 @@
  * is_commitment_registered(), balanceOf()
  */
 
-import { RpcProvider, Contract, num, type Abi } from 'starknet';
+import { RpcProvider, Contract, num, type Abi, uint256 } from 'starknet';
 import { config } from '../config/env';
 import {
     StarknetConnectionError,
@@ -16,13 +16,13 @@ import {
 } from '../types/errors';
 
 // ─── Inline ABI fragments (only what we call) ──────────────────────────────
+// Matches the actual Cairo contract signatures in contracts/src/vault.cairo
 const VAULT_ABI = [
     {
         name: 'deposit',
         type: 'function',
         inputs: [
-            { name: 'amount', type: 'u256' },
-            { name: 'commitment', type: 'felt' },
+            { name: 'commitment', type: 'felt' },  // Only commitment - no amount
         ],
         outputs: [],
         stateMutability: 'external',
@@ -31,18 +31,19 @@ const VAULT_ABI = [
         name: 'withdraw',
         type: 'function',
         inputs: [
-            { name: 'nullifier_hash', type: 'felt' },
-            { name: 'commitment', type: 'felt' },
-            { name: 'recipient', type: 'felt' },
+            { name: 'nullifier', type: 'felt' },
+            { name: 'proof', type: 'core::array::Span::<core::felt252>' },
+            { name: 'recipient', type: 'core::starknet::contract_address::ContractAddress' },
+            { name: 'amount', type: 'u256' },
         ],
         outputs: [],
         stateMutability: 'external',
     },
     {
-        name: 'is_commitment_registered',
+        name: 'get_total_staked',
         type: 'function',
-        inputs: [{ name: 'commitment', type: 'felt' }],
-        outputs: [{ name: 'registered', type: 'felt' }],
+        inputs: [],
+        outputs: [{ type: 'u256' }],
         stateMutability: 'view',
     },
 ] as const;
@@ -51,12 +52,36 @@ const ERC20_ABI = [
     {
         name: 'balanceOf',
         type: 'function',
-        inputs: [{ name: 'account', type: 'felt' }],
-        outputs: [
-            { name: 'low', type: 'felt' },
-            { name: 'high', type: 'felt' },
-        ],
+        inputs: [{ name: 'account', type: 'core::starknet::contract_address::ContractAddress' }],
+        outputs: [{ type: 'u256' }],
         stateMutability: 'view',
+    },
+    {
+        name: 'balance_of',  // snake_case variant
+        type: 'function',
+        inputs: [{ name: 'account', type: 'core::starknet::contract_address::ContractAddress' }],
+        outputs: [{ type: 'u256' }],
+        stateMutability: 'view',
+    },
+    {
+        name: 'mint',
+        type: 'function',
+        inputs: [
+            { name: 'recipient', type: 'core::starknet::contract_address::ContractAddress' },
+            { name: 'amount', type: 'u256' }
+        ],
+        outputs: [],
+        stateMutability: 'external',
+    },
+    {
+        name: 'approve',
+        type: 'function',
+        inputs: [
+            { name: 'spender', type: 'core::starknet::contract_address::ContractAddress' },
+            { name: 'amount', type: 'u256' }
+        ],
+        outputs: [{ type: 'bool' }],
+        stateMutability: 'external',
     },
 ] as const;
 
@@ -167,9 +192,123 @@ export class StarknetService {
         });
     }
 
+    /** Execute the actual deposit (mint sBTC) on-chain via the relayer account */
+    static async executeDeposit(params: {
+        commitment: string;
+        amount: bigint;
+        vault_id: string;
+    }): Promise<string> {
+        return this.withResilience(async (provider) => {
+            const { WalletService } = await import('./WalletService');
+
+            const account = WalletService.getAccount();
+            if (!account) {
+                throw new Error('INSUFFICIENT SEPOLIA ETH: No relayer account configured');
+            }
+
+            const amountU256 = uint256.bnToUint256(params.amount);
+
+            // Correct vault.deposit(commitment: felt252) signature from Cairo contract.
+            // The vault doesn't transfer tokens itself - tokens must be sent to vault first.
+            // We use a 2-call multicall:
+            //   1. mockBtc.mint(vault, amount)     — mint tokens directly to vault
+            //   2. vault.deposit(commitment)       — record commitment on-chain
+            const mintCall = {
+                contractAddress: config.MOCKBTC_CONTRACT_ADDRESS,
+                entrypoint: 'mint',
+                calldata: [
+                    config.VAULT_CONTRACT_ADDRESS,  // mint directly to vault
+                    amountU256.low.toString(),
+                    amountU256.high.toString(),
+                ]
+            };
+
+            const depositCall = {
+                contractAddress: config.VAULT_CONTRACT_ADDRESS,
+                entrypoint: 'deposit',
+                calldata: [
+                    params.commitment  // only commitment - matches Cairo signature
+                ]
+            };
+
+            try {
+                const nonce = await account.getNonce('latest');
+                console.log(`[StarknetService] Executing deposit multicall for commitment: ${params.commitment}`);
+
+                const response = await account.execute([mintCall, depositCall], {
+                    nonce
+                });
+
+                console.log(`[StarknetService] Deposit tx sent. Hash: ${response.transaction_hash}`);
+                return response.transaction_hash;
+            } catch (err: any) {
+                const errMsg = typeof err?.message === 'string'
+                    ? err.message
+                    : String(err ?? 'Unknown deposit execution error');
+                const errMsgLower = errMsg.toLowerCase();
+                if (errMsgLower.includes('balance is smaller') || errMsgLower.includes('insufficient')) {
+                    throw new Error('INSUFFICIENT SEPOLIA ETH');
+                }
+                throw new Error(`Deposit execution failed: ${errMsg}`);
+            }
+        });
+    }
+
     /** Validate tx hash format. */
     static validateTxHashFormat(txHash: string): boolean {
         return /^0x[0-9a-fA-F]{63,64}$/.test(txHash);
+    }
+
+    /** Execute the actual withdraw on-chain via the relayer account */
+    static async withdraw(params: {
+        nullifierHash: string;
+        proof: string[];
+        recipient: string;
+        amount: bigint;
+    }): Promise<string> {
+        return this.withResilience(async (provider) => {
+            const { WalletService } = await import('./WalletService');
+
+            const account = WalletService.getAccount();
+            if (!account) {
+                throw new Error('INSUFFICIENT SEPOLIA ETH: No relayer account configured');
+            }
+
+            const call = {
+                contractAddress: config.VAULT_CONTRACT_ADDRESS,
+                entrypoint: 'withdraw',
+                calldata: [
+                    params.nullifierHash,
+                    params.proof.length.toString(),
+                    ...params.proof, // Span array elements
+                    params.recipient,
+                    uint256.bnToUint256(params.amount).low.toString(),
+                    uint256.bnToUint256(params.amount).high.toString()
+                ]
+            };
+
+            try {
+                const nonce = await account.getNonce('latest');
+
+                console.log(`[StarknetService] Executing withdraw transaction for nullifier: ${params.nullifierHash}`);
+
+                const response = await account.execute(call, {
+                    nonce
+                });
+
+                console.log(`[StarknetService] Withdraw tx sent. Hash: ${response.transaction_hash}`);
+                return response.transaction_hash;
+            } catch (err: any) {
+                const errMsg = typeof err?.message === 'string'
+                    ? err.message
+                    : String(err ?? 'Unknown withdraw execution error');
+                const errMsgLower = errMsg.toLowerCase();
+                if (errMsgLower.includes('balance is smaller') || errMsgLower.includes('insufficient')) {
+                    throw new Error('INSUFFICIENT SEPOLIA ETH');
+                }
+                throw new Error(`Withdraw execution failed: ${errMsg}`);
+            }
+        });
     }
 
     /** Fetch real transaction receipt from Starknet — uses resilience wrapper. */
@@ -341,11 +480,11 @@ export class StarknetService {
      */
     static async isCommitmentOnChain(commitment: string): Promise<boolean> {
         return this.withResilience(async (provider) => {
-            const contract = new Contract(
-                VAULT_ABI as unknown as Abi,
-                config.VAULT_CONTRACT_ADDRESS,
-                provider
-            );
+            const contract = new Contract({
+                abi: VAULT_ABI as unknown as Abi,
+                address: config.VAULT_CONTRACT_ADDRESS,
+                providerOrAccount: provider
+            });
 
             const result = await contract.call('is_commitment_registered', [commitment]);
             return BigInt(result as unknown as string) !== BigInt(0);
@@ -360,19 +499,17 @@ export class StarknetService {
      */
     static async getMockBTCBalance(walletAddress: string): Promise<bigint> {
         return this.withResilience(async (provider) => {
-            const contract = new Contract(
-                ERC20_ABI as unknown as Abi,
-                config.MOCKBTC_CONTRACT_ADDRESS,
-                provider
-            );
+            const contract = new Contract({
+                abi: ERC20_ABI as unknown as Abi,
+                address: config.MOCKBTC_CONTRACT_ADDRESS,
+                providerOrAccount: provider
+            });
 
             const result = await contract.call('balanceOf', [walletAddress]);
             const r = result as unknown as { low: bigint | string; high: bigint | string };
 
-            // Uint256: value = high * 2^128 + low
-            const low = BigInt(num.toHex(r.low as unknown as string));
-            const high = BigInt(num.toHex(r.high as unknown as string));
-            return high * (BigInt(2) ** BigInt(128)) + low;
+            // Uint256
+            return uint256.uint256ToBN({ low: BigInt(r.low), high: BigInt(r.high) });
         }).catch(err => {
             throw new StarknetConnectionError(
                 `Failed to fetch MockBTC balance for ${walletAddress}: ${err instanceof Error ? err.message : String(err)}`
@@ -385,7 +522,7 @@ export class StarknetService {
      */
     static async isContractReachable(address: string): Promise<boolean> {
         return this.withResilience(async (provider) => {
-            const classHash = await provider.getClassHashAt(address);
+            const classHash = await provider.getClassHashAt(address, 'latest');
             return typeof classHash === 'string' && classHash.length > 2;
         }).catch(() => false);
     }

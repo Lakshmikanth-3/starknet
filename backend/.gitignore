@@ -1,8 +1,79 @@
 node_modules/
 dist/
 *.db
+*.db-shm
+*.db-wal
 *.log
 .env
 .DS_Store
 coverage/
 .vercel
+
+# Debug and trace files
+*_trace*.txt
+*trace*.txt
+bigint_trace*.txt
+debug_*.txt
+deploy_*.txt
+deposit_result*.txt
+details_*.txt
+fee_*.txt
+first_run*.txt
+full_deploy*.txt
+last_*.txt
+*_utf8.txt
+*_error*.txt
+signing_trace*.txt
+strk_balance*.txt
+v9_run*.txt
+wsl_debug.log
+
+# Large diff files
+*.diff
+all_history.diff
+
+# Temporary output files
+curl_out.json
+audit_dump.json
+hashes.json
+tx_hashes.json
+tx_error_full.json
+vaults_debug.json
+
+# Deployment logs
+deployment*.log
+deploy_step.log
+error.log
+
+# Test and debug scripts outputs
+inspect_out*.txt
+preflight_out.txt
+verification_output.txt
+tsc_check*.txt
+syntax_error.txt
+hash_code*.txt
+msg_hashes*.txt
+pending_lines.txt
+ef_lines.txt
+dam_lines.txt
+rb_lines.txt
+utxo.txt
+raw_fee*.txt
+selectors.txt
+plugin_search.txt
+txt_tail.bin
+log_tail.bin
+withdraw_result.txt
+
+# Account files (sensitive)
+deployer-account.json
+devnet_accounts.json
+devnet_5052_accounts.json
+sncast_accounts.json
+NEW_ACCOUNT_CREDENTIALS.json
+
+# Help command outputs
+*_help.txt
+execute_help.txt
+prove_help.txt
+declare_help.txt

@@ -20,11 +20,17 @@ export interface DepositRequest {
 }
 
 export interface DepositResponse {
-    message: string;
-    commitment: string;
-    nullifier_hash: string;
-    amount: number;
-    secret: string;
+    message?: string;
+    commitment?: string;
+    nullifier_hash?: string;
+    amount?: number;
+    secret?: string;
+    transaction_hash?: string;
+    status?: string;
+    vault_id?: string;
+    timestamp?: string;
+    voyager_url?: string;
+    bitcoin_txid?: string;
 }
 
 export interface WithdrawRequest {
@@ -36,6 +42,7 @@ export interface WithdrawRequest {
 export interface WithdrawResponse {
     message: string;
     status: string;
+    txHash?: string;
 }
 
 export interface DetectLockResponse {
@@ -43,8 +50,10 @@ export interface DetectLockResponse {
     blockHeight?: number;
     transactionId?: string;
     confirmations?: number;
-    amount?: number;
+    amountMatched?: number;
     status: string;
+    signet_url?: string;
+    mempool_url?: string;
 }
 
 export interface HealthResponse {
@@ -66,12 +75,7 @@ export interface HealthResponse {
     timestamp: number;
 }
 
-export interface DepositResponse {
-    transaction_hash: string;
-    status: string;
-    vault_id: string;
-    timestamp: string;
-}
+
 
 export interface AuditVerifyResult {
     tx_hash: string;

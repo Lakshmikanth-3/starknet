@@ -19,6 +19,7 @@ const apiClient = axios.create({
     headers: {
         'Content-Type': 'application/json',
     },
+    timeout: 30000 // Added 30 second timeout as backend does exponential backoff
 });
 
 export const api = {
@@ -48,15 +49,33 @@ export const api = {
     },
 
     getBtcStatus: async (): Promise<any> => {
-        const response = await apiClient.get('/api/bridge/btc-status');
+        const response = await apiClient.get('/api/bridge/status');
+        return response.data;
+    },
+
+    getDepositAddress: async (vaultId: string): Promise<any> => {
+        const response = await apiClient.get(`/api/bridge/deposit-address?vault_id=${vaultId}`);
         return response.data;
     },
 
     // Core Actions
     depositCommitment: async (data: DepositRequest): Promise<DepositResponse> => {
-        // Maps to the backend /api/commitment/create route
-        const response = await apiClient.post<DepositResponse>('/api/commitment/create', data);
-        return response.data;
+        try {
+            const response = await apiClient.post<any>('/api/commitment/create', data);
+
+            // Handle nested data structures or direct mapping based on backend response evolution
+            const responseData = response.data;
+            return {
+                commitment: responseData.commitment_hash || responseData.data?.commitment || responseData.commitment,
+                nullifier_hash: responseData.nullifier_hash || responseData.data?.nullifier_hash,
+                status: 'success',
+                transaction_hash: ''
+            };
+        } catch (error: any) {
+            const errorBody = error.response?.data?.error || error.message;
+            console.error('[api] createCommitment failed:', error.response?.status, errorBody);
+            throw new Error(`Request failed with status code ${error.response?.status || 500}: ${errorBody}`);
+        }
     },
 
     withdrawCommitment: async (data: WithdrawRequest): Promise<WithdrawResponse> => {
@@ -66,13 +85,42 @@ export const api = {
     },
 
     // Bridge
-    detectLock: async (address: string, amountSats: number): Promise<DetectLockResponse> => {
-        const response = await apiClient.post<any>('/api/bridge/detect-lock', {
-            address,
-            amountSats,
-            simulate: false
+    detectLock: async (address: string, amount: number): Promise<DetectLockResponse> => {
+        const response = await apiClient.get<any>('/api/bridge/detect-lock', {
+            params: {
+                address: address,  // Backend route expects 'address', not 'vault_id'
+                amount: amount     // BTC float e.g. 0.002
+            }
         });
-        return response.data.data || response.data;
+
+        const data = response.data.data || response.data;
+        return {
+            locked: data.detected,
+            transactionId: data.txid,
+            confirmations: data.confirmations,
+            amountMatched: data.amount_btc, // Fixed property name
+            status: data.detected ? 'LOCKED' : 'PENDING',
+            signet_url: data.signet_url,    // Included missing property
+            mempool_url: data.mempool_url,  // Included missing property
+        };
+    },
+
+    broadcastTx: async (amount: string): Promise<any> => {
+        const response = await apiClient.post('/api/bridge/broadcast', { amount });
+        return response.data;
+    },
+
+    // Check sender balance for auto-broadcast availability
+    checkSenderBalance: async (): Promise<{
+        hasFunds: boolean;
+        balance: number;
+        balanceBTC: string;
+        canBroadcast: boolean;
+        message: string;
+        address?: string;
+    }> => {
+        const response = await apiClient.get('/api/bridge/sender-balance');
+        return response.data;
     },
 
     // Audit
@@ -86,10 +134,14 @@ export const api = {
     }
 };
 
+
 export const submitDeposit = (body: {
     vault_id: string;
     commitment: string;
     amount: number;
+    bitcoin_txid?: string;
+    secret?: string;   // forwarded for ZK proof generation
+    salt?: string;     // optional explicit salt
 }): Promise<DepositResponse> =>
     apiClient.post('/api/commitment/deposit', body).then(r => r.data);
 

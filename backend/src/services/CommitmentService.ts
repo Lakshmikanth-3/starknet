@@ -9,10 +9,10 @@
  * DB table: commitments (see schema.ts addCommitmentsTable())
  */
 
-import { hash } from 'starknet';
 import { getDb } from '../db/schema';
 import { v4 as uuidv4 } from 'uuid';
 import { lockManager } from '../middleware/lockManager';
+import { CryptoService } from './CryptoService';
 
 export interface CommitmentRecord {
     id: string;
@@ -32,9 +32,9 @@ export class CommitmentService {
     static commit(secret: string, salt: string): { commitment: string; nullifier_hash: string; id: string } {
         const db = getDb();
 
-        // starknet.js v6 correct API
-        const commitment = hash.computePedersenHash(secret, salt);
-        const nullifier_hash = hash.computePoseidonHash(secret, salt);
+        // starknet.js v6 correct API via CryptoService
+        const commitment = CryptoService.generateCommitment(secret, salt);
+        const nullifier_hash = CryptoService.generateNullifier(commitment, secret);
 
         // Check if commitment already exists
         const existing = db
@@ -58,7 +58,7 @@ export class CommitmentService {
      * Timing-safe via constant-time string comparison.
      */
     static verify(secret: string, salt: string, expectedCommitment: string): boolean {
-        const computed = hash.computePedersenHash(secret, salt);
+        const computed = CryptoService.generateCommitment(salt, secret); // salt acts as amount based on prev usage
         // Normalise both to lowercase without 0x for comparison
         const norm = (s: string) => s.toLowerCase().replace('0x', '').padStart(64, '0');
         return norm(computed) === norm(expectedCommitment);

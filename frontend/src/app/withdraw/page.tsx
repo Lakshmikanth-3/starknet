@@ -27,7 +27,7 @@ export default function WithdrawPage() {
         toast({ title: "Dev Tool", description: "In a full client, the Poseidon tree computes this locally.", variant: "default" });
     }
 
-    const handleGenerateProof = async () => {
+    const handleWithdraw = async () => {
         if (!secret || !nullifier) {
             toast({ title: "Missing Data", description: "Provide both the secret and nullifier.", variant: "destructive" });
             return;
@@ -35,52 +35,26 @@ export default function WithdrawPage() {
 
         setProofLoading(true);
         try {
-            // Calls the backend ZK generator.
-            const res = await api.withdrawCommitment({ secret, nullifier, proof: "GENERATE" });
+            toast({
+                title: "Generating ZK Proof...",
+                description: "This may take 30-60 seconds via Scarb 2.12.2. The relayer will submit the withdrawal automatically.",
+                variant: "default"
+            });
+
+            // Calls the backend to sequence ZK Proof generation -> Starknet Withdrawal
+            const res = await api.withdrawCommitment({ secret, nullifier_hash: nullifier } as any);
 
             setProofParams({
                 nullifier_hash: nullifier,
-                proof_data: res.status // Cairo Proof ID
+                proof_data: 'Processed securely via Backend Relayer',
+                txHash: res.txHash || 'Unknown'
             });
 
-            toast({ title: "Proof Generated", description: "ZK parameters constructed.", variant: "success" });
+            toast({ title: "Withdrawal Successful!", description: `Starknet TX: ${res.txHash}`, variant: "success" });
         } catch (e: any) {
-            toast({ title: "Proof Failed", description: e.message || "API Error", variant: "destructive" });
+            toast({ title: "Withdrawal Failed", description: e.response?.data?.error || e.message || "API Error", variant: "destructive" });
         } finally {
             setProofLoading(false);
-        }
-    };
-
-    const handleSubmitWithdrawal = async () => {
-        if (!wallet || !wallet.account || !address || !proofParams) {
-            toast({ title: "Cannot Proceed", description: "Missing wallet or proof.", variant: "destructive" });
-            return;
-        }
-
-        setLoading(true);
-        try {
-
-            const withdrawCall = {
-                contractAddress: VAULT_ADDRESS,
-                entrypoint: "withdraw",
-                calldata: CallData.compile({
-                    nullifier_hash: proofParams.nullifier_hash,
-                    proof_data: [proofParams.proof_data]
-                })
-            };
-
-            const tx = await wallet.account.execute([withdrawCall]);
-
-            toast({
-                title: "Withdrawal Submitted!",
-                description: `Starknet TX: ${tx.transaction_hash.slice(0, 10)}...`,
-                variant: "success"
-            });
-
-        } catch (e: any) {
-            toast({ title: "Transaction Failed", description: e.message || "Starknet Error", variant: "destructive" });
-        } finally {
-            setLoading(false);
         }
     };
 
@@ -106,7 +80,7 @@ export default function WithdrawPage() {
                             <Input
                                 type="text"
                                 placeholder="0x..."
-                                className="font-mono text-xs bg-zinc-950/50"
+                                className="font-mono text-sm text-zinc-300 bg-zinc-900/80 border-zinc-700 h-12 focus-visible:ring-btc-500 focus-visible:border-btc-500 rounded-xl transition-all"
                                 value={secret}
                                 onChange={(e) => setSecret(e.target.value)}
                             />
@@ -120,7 +94,7 @@ export default function WithdrawPage() {
                             <Input
                                 type="text"
                                 placeholder="0x..."
-                                className="font-mono text-xs bg-zinc-950/50"
+                                className="font-mono text-sm text-zinc-300 bg-zinc-900/80 border-zinc-700 h-12 focus-visible:ring-btc-500 focus-visible:border-btc-500 rounded-xl transition-all"
                                 value={nullifier}
                                 onChange={(e) => setNullifier(e.target.value)}
                             />
@@ -128,24 +102,10 @@ export default function WithdrawPage() {
                     </div>
 
                     <div className="pt-2 border-t border-zinc-800 flex flex-col gap-3">
-                        <Button onClick={handleGenerateProof} disabled={proofLoading || !!proofParams} className="w-full bg-zinc-800 text-zinc-300 hover:bg-zinc-700">
+                        <Button onClick={handleWithdraw} disabled={proofLoading || !!proofParams} className="w-full bg-btc-500 hover:bg-btc-400 text-black font-bold h-12 rounded-xl shadow-[0_0_15px_rgba(246,147,26,0.3)] transition-all">
                             {proofLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                            {proofParams ? "Proof Ready" : "Generate ZK Proof"}
+                            {proofParams ? "Withdrawal Complete" : "Generate ZK Proof & Withdraw"}
                         </Button>
-
-                        {!proofLoading && !proofParams && (
-                            <button
-                                onClick={() => {
-                                    setProofParams({
-                                        nullifier_hash: nullifier || "0x123demo_hash",
-                                        proof_data: "demo_cairo_proof_001"
-                                    });
-                                }}
-                                className="text-[0.65rem] text-zinc-600 hover:text-zinc-400 font-mono transition-colors uppercase tracking-widest text-center"
-                            >
-                                [ Skip to Finalize (Demo Only) ]
-                            </button>
-                        )}
                     </div>
 
                     {proofParams && (
@@ -157,16 +117,17 @@ export default function WithdrawPage() {
 
                             <div className="p-4 rounded-lg bg-zinc-950 border border-zinc-800 space-y-2">
                                 <div className="flex items-center gap-2 text-zinc-400 text-xs uppercase tracking-wider font-semibold mb-2">
-                                    <Cpu className="h-4 w-4" /> Proof Constructed
+                                    <Cpu className="h-4 w-4" /> ZK Proof & Transaction Status
                                 </div>
                                 <div className="font-mono text-xs text-zinc-500 break-all">{proofParams.proof_data}</div>
+                                {proofParams.txHash && (
+                                    <div className="pt-2">
+                                        <a href={`https://sepolia.voyager.online/tx/${proofParams.txHash}`} target="_blank" className="font-mono text-xs text-orange-400 border border-orange-800 hover:bg-orange-950/30 px-3 py-1 rounded inline-block transition-all">
+                                            ↗ Verify on Voyager
+                                        </a>
+                                    </div>
+                                )}
                             </div>
-
-                            <Button onClick={handleSubmitWithdrawal} disabled={loading || !wallet} className="w-full h-12 text-base">
-                                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                {wallet ? "Submit to Starknet" : "Connect Wallet First"}
-                                <ArrowRight className="ml-2 h-4 w-4" />
-                            </Button>
                         </div>
                     )}
 

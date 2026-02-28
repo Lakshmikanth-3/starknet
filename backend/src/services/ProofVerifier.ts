@@ -87,7 +87,7 @@ export async function verifyWithdrawProof(
     try {
         amountSats = CryptoService.decryptAmount(vault.encrypted_amount, vault.salt);
         checks.commitmentMatch = CryptoService.verifyCommitment(
-            amountSats,
+            amountSats.toString(),
             proof.randomness,
             vault.commitment
         );

@@ -1,0 +1,154 @@
+[
+  {
+    "type": "impl",
+    "name": "PrivateBTCVaultImpl",
+    "interface_name": "private_btc_core::vault::IPrivateBTCVault"
+  },
+  {
+    "type": "struct",
+    "name": "core::integer::u256",
+    "members": [
+      {
+        "name": "low",
+        "type": "core::integer::u128"
+      },
+      {
+        "name": "high",
+        "type": "core::integer::u128"
+      }
+    ]
+  },
+  {
+    "type": "struct",
+    "name": "core::array::Span::<core::felt252>",
+    "members": [
+      {
+        "name": "snapshot",
+        "type": "@core::array::Array::<core::felt252>"
+      }
+    ]
+  },
+  {
+    "type": "interface",
+    "name": "private_btc_core::vault::IPrivateBTCVault",
+    "items": [
+      {
+        "type": "function",
+        "name": "deposit",
+        "inputs": [
+          {
+            "name": "amount",
+            "type": "core::integer::u256"
+          },
+          {
+            "name": "commitment",
+            "type": "core::felt252"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "withdraw",
+        "inputs": [
+          {
+            "name": "nullifier",
+            "type": "core::felt252"
+          },
+          {
+            "name": "proof",
+            "type": "core::array::Span::<core::felt252>"
+          },
+          {
+            "name": "recipient",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "amount",
+            "type": "core::integer::u256"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "get_total_staked",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "core::integer::u256"
+          }
+        ],
+        "state_mutability": "view"
+      }
+    ]
+  },
+  {
+    "type": "constructor",
+    "name": "constructor",
+    "inputs": [
+      {
+        "name": "btc_token",
+        "type": "core::starknet::contract_address::ContractAddress"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "private_btc_core::vault::PrivateBTCVault::Deposit",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "commitment",
+        "type": "core::felt252",
+        "kind": "key"
+      },
+      {
+        "name": "amount",
+        "type": "core::integer::u256",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "private_btc_core::vault::PrivateBTCVault::Withdrawal",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "nullifier",
+        "type": "core::felt252",
+        "kind": "key"
+      },
+      {
+        "name": "recipient",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "data"
+      },
+      {
+        "name": "amount",
+        "type": "core::integer::u256",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "private_btc_core::vault::PrivateBTCVault::Event",
+    "kind": "enum",
+    "variants": [
+      {
+        "name": "Deposit",
+        "type": "private_btc_core::vault::PrivateBTCVault::Deposit",
+        "kind": "nested"
+      },
+      {
+        "name": "Withdrawal",
+        "type": "private_btc_core::vault::PrivateBTCVault::Withdrawal",
+        "kind": "nested"
+      }
+    ]
+  }
+]

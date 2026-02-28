@@ -17,6 +17,8 @@
   --color-text-mid: #888;
   --color-green: #22c55e;
   --color-red: #ef4444;
+  --color-btc-400: #F6931A;
+  --color-btc-500: #E88310;
   --font-mono: var(--font-mono);
   --font-display: var(--font-display);
 }
@@ -284,7 +286,7 @@ main {
   font-size: 0.5rem;
 }
 
-h1 {
+.hero-title {
   font-family: var(--display);
   font-size: clamp(2.5rem, 6vw, 5rem);
   font-weight: 800;
@@ -293,12 +295,12 @@ h1 {
   margin-bottom: 1.25rem;
 }
 
-h1 .line1 {
+.hero-title .line1 {
   display: block;
   color: var(--text);
 }
 
-h1 .line2 {
+.hero-title .line2 {
   display: block;
   color: var(--orange);
   position: relative;

@@ -10,8 +10,8 @@ const envSchema = z.object({
         .refine((u) => u.startsWith('https://'), {
             message: 'STARKNET_RPC_URL must start with https://',
         }),
-    VAULT_CONTRACT_ADDRESS: z.string().default('0x03e735d12f81f2f4beb45634bef9997ae3bde996c2f84a204957dc5ef2209de2'),
-    MOCKBTC_CONTRACT_ADDRESS: z.string().default('0x0291c79b16b1541361c8efe84c5558994066948cfe9b7075db781a758c2cec52'),
+    VAULT_CONTRACT_ADDRESS: z.string().default('0x072d121d6a86c73b649519cb51546dfba728ff0f1f3c041662ea7088ef01775'),
+    MOCKBTC_CONTRACT_ADDRESS: z.string().default('0x0201c23ba72660516c987e8d11b8f6238b386f13099880cd1a8f5b065667343'),
     DB_PATH: z.string().default('./privatebtc-production-v4.db'),
     ENCRYPTION_KEY: z
         .string()
@@ -24,7 +24,14 @@ const envSchema = z.object({
     // Wallet / Account — optional; needed for VaultService tx execution
     ACCOUNT_ADDRESS: z.string().default(''),
     PRIVATE_KEY: z.string().default(''),
-    SEPOLIA_PRIVATE_KEY: z.string().default(''),
+    BITCOIN_NETWORK: z.enum(['signet', 'mainnet', 'testnet']).default('signet'),
+    XVERSE_WALLET_ADDRESS: z.string().startsWith('tb1').default('tb1q'),
+    MEMPOOL_API_URL: z.string().url().default('https://mempool.space/signet/api'),
+    SIGNET_MIN_CONFIRMATIONS: z.coerce.number().default(1),
+    STARKNET_ACCOUNT_ADDRESS: z.string().startsWith('0x').default('0x'),
+    SEPOLIA_PRIVATE_KEY: z.string().startsWith('0x').default('0x'),
+    VAULT_ADDRESS: z.string().startsWith('0x').default('0x'),
+    SBTC_ADDRESS: z.string().startsWith('0x').default('0x'),
 });
 
 const parsed = envSchema.safeParse(process.env);

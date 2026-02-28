@@ -1,5 +1,5 @@
 [sncast.sepolia_fix]
 account = "sepolia"
-url = "https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_8/PoSTfSa4MmSbEbXRWyHoQ"
+url = "https://api.cartridge.gg/x/starknet/sepolia"
 fee-token = "strk"
 wait-params = { timeout = 500, retry-interval = 10 }

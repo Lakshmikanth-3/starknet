@@ -71,11 +71,17 @@ router.post('/verify', async (_req: Request, res: Response) => {
                     'PENDING';
 
                 // 4. Update SQLite with latest status
-                db.prepare(`UPDATE vaults SET status = ? WHERE deposit_tx_hash = ?`).run(status, txHash);
+                let dbStatus = 'pending';
+                if (status === 'ACCEPTED_ON_L2' || status === 'SUCCEEDED') {
+                    dbStatus = 'active';
+                    verified++;
+                } else if (status === 'REJECTED' || status === 'REVERTED') {
+                    failed++;
+                } else {
+                    pending++;
+                }
 
-                if (status === 'ACCEPTED_ON_L2' || status === 'SUCCEEDED') verified++;
-                else if (status === 'REJECTED') failed++;
-                else pending++;
+                db.prepare(`UPDATE vaults SET status = ? WHERE deposit_tx_hash = ?`).run(dbStatus, txHash);
 
                 results.push({
                     tx_hash: txHash,

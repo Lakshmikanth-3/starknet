@@ -134,22 +134,47 @@ export class CryptoService {
     // ─────────────────────────────────────────────────────────────────────
 
     /**
-     * Generate commitment using Pedersen hash.
-     * MUST match what the Cairo contract computes: pedersen(amountSats, randomness)
-     * Both inputs are valid felt252 values.
+     * Validate that a value (hex or decimal string) is within the Starknet felt252 field prime.
+     * Throws an error if invalid.
      */
-    static generateCommitment(amountSats: bigint, randomness: string): string {
-        // computePedersen = hash.computePedersenHash — starknet.js v6 API
-        const commitment = computePedersen(amountSats.toString(), randomness);
-        return commitment; // already 0x-prefixed hex from starknet.js
+    static validateFelt252(val: string | bigint): string {
+        try {
+            const bigVal = BigInt(val);
+            const prime = BigInt(STARK_FIELD_PRIME);
+            if (bigVal < 0n || bigVal >= prime) {
+                throw new Error('Value exceeds Starknet field prime (felt252 bounds)');
+            }
+            return bigVal.toString(16); // return valid hex string
+        } catch (e: any) {
+            if (e.message.includes('bounds')) throw e;
+            throw new Error(`Invalid felt252 format: ${val}`);
+        }
     }
 
     /**
-     * Generate nullifier using Poseidon hash.
-     * computePoseidon(commitment, randomness) — starknet.js v6 API
+     * Generate commitment using Pedersen hash: pedersen(satoshiString, secret)
      */
-    static generateNullifier(commitment: string, randomness: string): string {
-        const nullifier = computePoseidon(commitment, randomness);
+    static generateCommitment(amountBTC: string, secret: string): string {
+        // Convert BTC to satoshis for felt252 compatibility
+        const amountSats = Math.round(parseFloat(amountBTC) * 1e8).toString();
+
+        if (isNaN(parseInt(amountSats))) {
+            throw new Error(`Invalid amount: ${amountBTC}`);
+        }
+
+        console.log('[CryptoService] Hashing amount (sats):', amountSats, 'secret:', secret.slice(0, 10) + '...');
+
+        const commitment = hash.computePedersenHash(amountSats, secret);
+        console.log('[CryptoService] commitment_hash:', commitment);
+        return commitment; // already 0x-prefixed hex
+    }
+
+    /**
+     * Generate nullifier using Pedersen hash: pedersen(commitmentHash, secret)
+     */
+    static generateNullifier(commitmentHash: string, secret: string): string {
+        const nullifier = hash.computePedersenHash(commitmentHash, secret);
+        console.log('[CryptoService] nullifier_hash:', nullifier);
         return nullifier; // 0x-prefixed hex
     }
 
@@ -159,12 +184,12 @@ export class CryptoService {
 
     /** Recompute commitment and compare using timing-safe equality. */
     static verifyCommitment(
-        amountSats: bigint,
-        randomness: string,
+        amount: string,
+        secret: string,
         commitment: string
     ): boolean {
         try {
-            const expected = this.generateCommitment(amountSats, randomness);
+            const expected = this.generateCommitment(amount, secret);
             // Normalize both to 32-byte buffers for timingSafeEqual
             const a = Buffer.from(BigInt(expected).toString(16).padStart(64, '0'), 'hex');
             const b = Buffer.from(BigInt(commitment).toString(16).padStart(64, '0'), 'hex');
@@ -176,12 +201,12 @@ export class CryptoService {
 
     /** Recompute nullifier and compare using timing-safe equality. */
     static verifyNullifier(
-        commitment: string,
-        randomness: string,
+        commitmentHash: string,
+        secret: string,
         nullifierHash: string
     ): boolean {
         try {
-            const expected = this.generateNullifier(commitment, randomness);
+            const expected = this.generateNullifier(commitmentHash, secret);
             const a = Buffer.from(BigInt(expected).toString(16).padStart(64, '0'), 'hex');
             const b = Buffer.from(BigInt(nullifierHash).toString(16).padStart(64, '0'), 'hex');
             return crypto.timingSafeEqual(a, b);

@@ -44,9 +44,10 @@ const app = express();
 
 // ── Security & logging ───────────────────────────────────────────────────────
 app.use(helmet());
-app.use(cors());
+app.use(cors({ origin: ['http://localhost:3000', 'http://127.0.0.1:3000'] }));
 app.use(morgan('combined'));
 app.use(express.json({ limit: '50kb' })); // Reject payloads > 50kb
+app.use(express.urlencoded({ extended: true }));
 
 // Apply General Limiter to all routes
 app.use(generalLimiter);
@@ -140,6 +141,37 @@ app.listen(config.PORT, () => {
     console.log(`🌍  Network:  ${config.NODE_ENV}`);
     console.log('🚀 ═══════════════════════════════════════════════════════════');
     console.log('');
+
+    // Auto-sync: check all pending vaults against Starknet and activate confirmed ones
+    setTimeout(async () => {
+        try {
+            const db = (await import('./db/schema')).default;
+            const { StarknetService } = await import('./services/StarknetService');
+            const pending = db.prepare(
+                "SELECT id, deposit_tx_hash FROM vaults WHERE status = 'pending' AND deposit_tx_hash IS NOT NULL"
+            ).all() as { id: string; deposit_tx_hash: string }[];
+
+            if (pending.length > 0) {
+                console.log(`🔄 Auto-syncing ${pending.length} pending vault(s) from Starknet...`);
+                const provider = StarknetService.getProvider();
+                for (const v of pending) {
+                    try {
+                        const receipt = await provider.getTransactionReceipt(v.deposit_tx_hash);
+                        const exec = (receipt as any).execution_status;
+                        const fin = (receipt as any).finality_status;
+                        if (exec === 'SUCCEEDED' || fin === 'ACCEPTED_ON_L2') {
+                            db.prepare("UPDATE vaults SET status = 'active' WHERE id = ?").run(v.id);
+                            console.log(`  ✅ Vault ${v.id.slice(0, 8)}... → active`);
+                        }
+                    } catch { /* TX not found yet — leave as pending */ }
+                }
+                console.log('🔄 Auto-sync complete.');
+            }
+        } catch (e) {
+            console.warn('⚠️  Auto-sync warning:', (e as Error).message);
+        }
+    }, 3000);
 });
 
 export default app;
+

@@ -8,7 +8,8 @@
  *  - getBalance() returns live MockBTC ERC20 balance
  */
 
-import { RpcProvider, Account, Contract, type Abi, uint256 } from 'starknet';
+import { Account, Contract, type Abi, uint256, RpcProvider } from 'starknet';
+import { StarknetService } from './StarknetService';
 import { config } from '../config/env';
 
 // ─── Inline ERC20 ABI (balanceOf only) ─────────────────────────────────────
@@ -47,16 +48,21 @@ export class WalletService {
         if (_account) return _account;
 
         const privateKey = config.PRIVATE_KEY || config.SEPOLIA_PRIVATE_KEY;
-        const accountAddress = config.ACCOUNT_ADDRESS;
+        const accountAddress = config.ACCOUNT_ADDRESS || config.STARKNET_ACCOUNT_ADDRESS;
 
-        if (!privateKey || !accountAddress) {
+        // Note: Default for STARKNET_ACCOUNT_ADDRESS is '0x' in env.ts so we should check length
+        if (!privateKey || !accountAddress || accountAddress === '0x') {
             console.warn(
                 '⚠️ WalletService: ACCOUNT_ADDRESS or PRIVATE_KEY not set — account operations unavailable.'
             );
             return null;
         }
 
-        _account = new Account(this.getProvider(), accountAddress, privateKey);
+        _account = new Account({
+            provider: { nodeUrl: config.STARKNET_RPC_URL },
+            address: accountAddress,
+            signer: privateKey
+        });
         return _account;
     }
 
@@ -66,7 +72,8 @@ export class WalletService {
      */
     static isAccountConfigured(): boolean {
         const privateKey = config.PRIVATE_KEY || config.SEPOLIA_PRIVATE_KEY;
-        return Boolean(privateKey && config.ACCOUNT_ADDRESS);
+        const accountAddress = config.ACCOUNT_ADDRESS || config.STARKNET_ACCOUNT_ADDRESS;
+        return Boolean(privateKey && accountAddress && accountAddress !== '0x');
     }
 
     /**
@@ -75,11 +82,11 @@ export class WalletService {
      */
     static async getBalance(walletAddress: string): Promise<bigint> {
         const provider = this.getProvider();
-        const contract = new Contract(
-            ERC20_ABI,
-            config.MOCKBTC_CONTRACT_ADDRESS,
-            provider
-        );
+        const contract = new Contract({
+            abi: ERC20_ABI,
+            address: config.MOCKBTC_CONTRACT_ADDRESS,
+            providerOrAccount: provider
+        });
 
         const result = await contract.call('balanceOf', [walletAddress]);
         const r = result as unknown as { low: bigint | string; high: bigint | string };
@@ -93,6 +100,7 @@ export class WalletService {
      * Get the address of the loaded account, or null.
      */
     static getAccountAddress(): string | null {
-        return config.ACCOUNT_ADDRESS || null;
+        const addr = config.ACCOUNT_ADDRESS || config.STARKNET_ACCOUNT_ADDRESS;
+        return addr && addr !== '0x' ? addr : null;
     }
 }
