@@ -116,25 +116,29 @@ export const useXverseWallet = () => {
       throw new Error('Wallet not connected');
     }
 
+    const paymentAddress = state.paymentAddress;
+
     return new Promise((resolve, reject) => {
       let isFinished = false;
-      let popupClosed = false;
-      
-      // Timeout after 60 seconds if no response
-      const timeoutId = setTimeout(() => {
-        if (!isFinished) {
-          console.log('[Xverse] ⏱️ Transaction timeout - no response received');
-          reject(new Error('Transaction timeout - please try again'));
-        }
-      }, 60000); // 60 seconds
+      let timeoutId: NodeJS.Timeout | null = null;
       
       try {
         console.log('[Xverse] 🚀 Initiating transaction...');
-        console.log('[Xverse] From:', state.paymentAddress);
+        console.log('[Xverse] From:', paymentAddress);
         console.log('[Xverse] To:', toAddress);
         console.log('[Xverse] Amount:', amountSats, 'sats');
         
-        sendBtcTransaction({
+        // Extended timeout: wait 15 seconds for onFinish before falling back
+        timeoutId = setTimeout(() => {
+          if (!isFinished) {
+            isFinished = true;
+            console.log('[Xverse] ⏱️ TIMEOUT: onFinish never fired after 15 seconds');
+            console.log('[Xverse] 🔄 Falling back to backend detection...');
+            resolve('pending');
+          }
+        }, 15000);
+        
+        const result = sendBtcTransaction({
           payload: {
             network: {
               type: BitcoinNetworkType.Signet,
@@ -145,37 +149,46 @@ export const useXverseWallet = () => {
                 amountSats: BigInt(amountSats),
               },
             ],
-            senderAddress: state.paymentAddress,
+            senderAddress: paymentAddress,
           },
-          onFinish: (response) => {
+          onFinish: (response: any) => {
+            console.log('[Xverse] 🎯 onFinish FIRED!');
+            console.log('[Xverse] Response object:', JSON.stringify(response, null, 2));
+            
             if (!isFinished) {
               isFinished = true;
-              clearTimeout(timeoutId);
-              console.log('[Xverse] ✅ Transaction confirmed!');
-              console.log('[Xverse] 🔗 TXID:', response.txid);
-              resolve(response.txid);
+              if (timeoutId) clearTimeout(timeoutId);
+              
+              const txid = response.txid || response.txId || response.transactionId || response.tx;
+              
+              if (txid) {
+                console.log('[Xverse] ✅ Transaction confirmed!');
+                console.log('[Xverse] 🔗 TXID:', txid);
+                resolve(txid);
+              } else {
+                console.error('[Xverse] ❌ onFinish fired but no TXID in response:', response);
+                resolve('pending');
+              }
+            } else {
+              console.log('[Xverse] ⚠️ onFinish fired but already finished (likely after timeout)');
             }
           },
           onCancel: () => {
-            popupClosed = true;
-            console.log('[Xverse] ℹ️ Popup closed by user');
-            
-            // If popup closed without onFinish, wait 3 seconds then check
-            setTimeout(() => {
-              if (!isFinished) {
-                clearTimeout(timeoutId);
-                console.log('[Xverse] ❌ Transaction cancelled - popup closed without confirmation');
-                reject(new Error('Transaction cancelled'));
-              } else {
-                console.log('[Xverse] ✅ Popup closed AFTER confirmation (transaction successful)');
-              }
-            }, 3000); // Wait 3 seconds for onFinish to fire
+            console.log('[Xverse] 🚪 Popup closed by user');
+            console.log('[Xverse] 🕐 Waiting for onFinish or timeout...');
           },
         });
+        
+        console.log('[Xverse] 📤 sendBtcTransaction returned:', result);
+        
       } catch (error: any) {
-        clearTimeout(timeoutId);
-        console.error('[Xverse] ❌ Send Bitcoin error:', error);
-        reject(error);
+        if (!isFinished) {
+          isFinished = true;
+          if (timeoutId) clearTimeout(timeoutId);
+          console.error('[Xverse] ❌ Send Bitcoin error:', error);
+          console.error('[Xverse] Error stack:', error.stack);
+          reject(error);
+        }
       }
     });
   };

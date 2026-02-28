@@ -91,11 +91,23 @@ export default function DepositPage() {
         };
     }, []);
 
-    // Manual Poll Trigger
-    const startPolling = () => {
+    // Manual Poll Trigger - with optional knownTxid from wallet
+    const startPolling = (knownTxid?: string) => {
         setHasSentBTC(true);
         setIsScanning(true);
         setScanError(null);
+
+        // If we already have the txid from wallet, use it immediately
+        if (knownTxid && knownTxid !== 'pending') {
+            console.log(`[Poll] Using known TXID from wallet: ${knownTxid}`);
+            setBitcoinTx(knownTxid);
+            setConfirmations(0);
+            setVoyagerUrl(`https://mempool.space/signet/tx/${knownTxid}`);
+            setStep(3);
+            setIsScanning(false);
+            toast({ title: "Bitcoin Sent!", description: `TXID: ${knownTxid.slice(0, 16)}...`, variant: "success" });
+            return;
+        }
 
         let attempts = 0;
         const MAX_ATTEMPTS = 180; // 180 × 5s = 15 minutes
@@ -119,11 +131,20 @@ export default function DepositPage() {
                     setIsScanning(false);
 
                     const detectedTxid = result.transactionId || (result as any).txid || "";
+                    console.log('[Poll] ✅ Detected TXID:', detectedTxid);
+                    console.log('[Poll] Full result:', JSON.stringify(result, null, 2));
+                    
+                    if (!detectedTxid) {
+                        console.error('[Poll] ❌ ERROR: No TXID in response!', result);
+                        setScanError('Transaction detected but no TXID returned');
+                        return;
+                    }
+                    
                     setBitcoinTx(detectedTxid);
                     setConfirmations(result.confirmations || 0);
                     setVoyagerUrl(result.mempool_url || `https://mempool.space/signet/tx/${detectedTxid}`);
                     setStep(3);
-                    toast({ title: "Deposit Detected!", description: `Found BTC TX: ${detectedTxid}`, variant: "success" });
+                    toast({ title: "Deposit Detected!", description: `Found BTC TX: ${detectedTxid.slice(0, 16)}...`, variant: "success" });
                     return;
                 }
 
@@ -182,52 +203,40 @@ export default function DepositPage() {
         }
 
         setIsWalletSending(true);
-        let transactionSucceeded = false;
-        let successTxid: string | null = null;
         
         try {
             const amountSats = Math.floor(parseFloat(amount) * 100_000_000);
-            console.log(`[Deposit] Starting wallet send: ${amountSats} sats (${amount} BTC) to ${depositAddress}`);
+            console.log(`[Deposit] 🚀 Starting wallet send: ${amountSats} sats (${amount} BTC) to ${depositAddress}`);
             console.log(`[Deposit] From address: ${walletAddress}`);
             
             const txid = await sendBitcoin({
                 toAddress: depositAddress,
                 amountSats: amountSats
             });
-
-            transactionSucceeded = true;
-            successTxid = txid;
-            console.log(`[Deposit] ✅ Transaction successful: ${txid}`);
             
+            console.log(`[Deposit] ✅ Transaction confirmed with TXID: ${txid}`);
+            
+            // Always have a real TXID now
             toast({
                 title: "Bitcoin Sent Successfully! 🎉",
                 description: `TXID: ${txid.slice(0, 16)}...`,
                 variant: "success"
             });
             
-            // Start polling for confirmation
-            console.log('[Deposit] Starting mempool polling...');
-            startPolling();
+            // Use the TXID directly - no polling needed
+            console.log('[Deposit] 📝 Using transaction TXID:', txid);
+            startPolling(txid);
+            
         } catch (err: any) {
-            // Don't show error if transaction already succeeded (popup close after success)
-            if (!transactionSucceeded) {
-                console.error('[Deposit] ❌ Send failed:', err);
-                console.error('[Deposit] Error details:', {
-                    message: err.message,
-                    stack: err.stack,
-                    name: err.name
-                });
-                toast({
-                    title: "Transaction Failed",
-                    description: err.message || "Failed to send Bitcoin",
-                    variant: "destructive"
-                });
-            } else {
-                console.log(`[Deposit] ℹ️ Ignoring post-success error (txid: ${successTxid}):`, err.message);
-            }
+            console.error('[Deposit] ❌ Transaction error:', err);
+            toast({
+                title: "Transaction Failed",
+                description: err.message || "Failed to send Bitcoin. Please try again.",
+                variant: "destructive"
+            });
         } finally {
             setIsWalletSending(false);
-            console.log('[Deposit] Wallet send flow completed. Success:', transactionSucceeded);
+            console.log('[Deposit] ✅ Wallet send flow completed');
         }
     };
 
@@ -505,9 +514,9 @@ export default function DepositPage() {
                                             {isWalletSending && (
                                                 <div className="mt-3 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
                                                     <p className="text-xs text-blue-400 text-center">
-                                                        <span className="font-semibold">ℹ️ Please wait...</span>
+                                                        <span className="font-semibold">⏳ Processing Transaction</span>
                                                         <br />
-                                                        <span className="text-blue-300/80">You can close the Xverse popup after confirming. The transaction will continue processing in the background.</span>
+                                                        <span className="text-blue-300/80">Confirm the transaction in Xverse. After confirming, you can close the popup - we'll automatically detect your transaction.</span>
                                                     </p>
                                                 </div>
                                             )}
@@ -550,7 +559,7 @@ export default function DepositPage() {
                                     {isBroadcasting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Bitcoin className="mr-2 h-4 w-4" />}
                                     {isBroadcasting ? 'Broadcasting...' : !autoBroadcastAvailable ? 'Auto-Broadcast Unavailable' : 'Broadcast Real Signet BTC'}
                                 </Button>
-                                <Button onClick={startPolling} className="w-full bg-btc-500 hover:bg-btc-400 text-black font-bold h-12 rounded-xl shadow-[0_0_15px_rgba(246,147,26,0.3)] transition-all">
+                                <Button onClick={() => startPolling()} className="w-full bg-btc-500 hover:bg-btc-400 text-black font-bold h-12 rounded-xl shadow-[0_0_15px_rgba(246,147,26,0.3)] transition-all">
                                     I've manually sent the BTC
                                 </Button>
                             </div>
@@ -594,26 +603,36 @@ export default function DepositPage() {
                             {/* Full TXID Display */}
                             <div className="space-y-2">
                                 <div className="text-xs text-green-700/70 font-semibold uppercase tracking-wider">Real Bitcoin Transaction ID</div>
-                                <div className="bg-zinc-950 border border-green-500/20 rounded-lg p-3 break-all">
-                                    <a 
-                                        href={`https://mempool.space/signet/tx/${bitcoinTx}`} 
-                                        target="_blank" 
-                                        rel="noopener noreferrer"
-                                        className="font-mono text-xs text-green-400 hover:text-green-300 transition-colors"
-                                    >
-                                        {bitcoinTx}
-                                    </a>
-                                </div>
-                                <div className="flex gap-2 items-center">
-                                    <a 
-                                        href={`https://mempool.space/signet/tx/${bitcoinTx}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-xs text-green-500 hover:text-green-400 underline"
-                                    >
-                                        View on Mempool.space →
-                                    </a>
-                                </div>
+                                {bitcoinTx ? (
+                                    <>
+                                        <div className="bg-zinc-950 border border-green-500/20 rounded-lg p-3 break-all">
+                                            <a 
+                                                href={`https://mempool.space/signet/tx/${bitcoinTx}`} 
+                                                target="_blank" 
+                                                rel="noopener noreferrer"
+                                                className="font-mono text-xs text-green-400 hover:text-green-300 transition-colors"
+                                            >
+                                                {bitcoinTx}
+                                            </a>
+                                        </div>
+                                        <div className="flex gap-2 items-center">
+                                            <a 
+                                                href={`https://mempool.space/signet/tx/${bitcoinTx}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="text-xs text-green-500 hover:text-green-400 underline"
+                                            >
+                                                View on Mempool.space →
+                                            </a>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="bg-zinc-950 border border-orange-500/20 rounded-lg p-3">
+                                        <p className="text-xs text-orange-400">
+                                            ⚠️ Transaction ID not available. Check browser console (F12) for debugging info.
+                                        </p>
+                                    </div>
+                                )}
                             </div>
 
                             <div className="grid grid-cols-2 gap-4 pt-2 border-t border-green-500/10">
@@ -787,16 +806,92 @@ export default function DepositPage() {
 
             {/* STEP 4 */}
             {step === 4 && (
-                <Card className="border-green-500/20 bg-green-950/10 text-center py-8">
-                    <CardContent className="space-y-4 flex flex-col items-center">
-                        <div className="h-20 w-20 bg-green-500/20 rounded-full flex items-center justify-center mb-2 animate-bounce">
-                            <ShieldCheck className="h-10 w-10 text-green-500" />
+                <Card className="border-green-500/20 bg-green-950/10">
+                    <CardContent className="space-y-6 py-8">
+                        <div className="flex flex-col items-center space-y-4 text-center">
+                            <div className="h-20 w-20 bg-green-500/20 rounded-full flex items-center justify-center animate-bounce">
+                                <ShieldCheck className="h-10 w-10 text-green-500" />
+                            </div>
+                            <h2 className="text-2xl font-bold text-zinc-100">Deposit Successful!</h2>
+                            <p className="text-zinc-400 max-w-sm">Your Bitcoin remains locked on Signet, and your shielded sBTC has been minted to your Starknet account.</p>
                         </div>
-                        <h2 className="text-2xl font-bold text-zinc-100">Deposit Successful!</h2>
-                        <p className="text-zinc-400 max-w-sm">Your Bitcoin remains locked on Signet, and your shielded sBTC has been minted to your Starknet account.</p>
 
-                        <div className="pt-6">
-                            <Button onClick={() => window.location.href = '/'} variant="outline">Return to Dashboard</Button>
+                        {/* Transaction Details */}
+                        <div className="space-y-4 max-w-2xl mx-auto">
+                            {/* Bitcoin Transaction */}
+                            {bitcoinTx && (
+                                <div className="rounded-xl bg-gradient-to-r from-orange-500/10 to-btc-500/10 border border-orange-500/20 p-4">
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <Bitcoin className="h-4 w-4 text-orange-400" />
+                                        <span className="text-xs font-semibold text-orange-400 uppercase tracking-wider">Bitcoin Transaction</span>
+                                    </div>
+                                    <div className="bg-zinc-950 border border-orange-500/10 rounded-lg p-3 mb-3">
+                                        <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1 font-mono">Transaction ID</div>
+                                        <a 
+                                            href={`https://mempool.space/signet/tx/${bitcoinTx}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="font-mono text-xs text-orange-400 hover:text-orange-300 break-all transition-colors"
+                                        >
+                                            {bitcoinTx}
+                                        </a>
+                                    </div>
+                                    <a 
+                                        href={`https://mempool.space/signet/tx/${bitcoinTx}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-xs text-orange-500 hover:text-orange-400 underline inline-flex items-center gap-1"
+                                    >
+                                        View on Mempool.space →
+                                    </a>
+                                </div>
+                            )}
+
+                            {/* Starknet Transaction */}
+                            {txHash && (
+                                <div className="rounded-xl bg-gradient-to-r from-purple-500/10 to-blue-500/10 border border-purple-500/20 p-4">
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <span className="text-xs font-semibold text-purple-400 uppercase tracking-wider">Starknet Transaction</span>
+                                    </div>
+                                    <div className="bg-zinc-950 border border-purple-500/10 rounded-lg p-3 mb-3">
+                                        <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1 font-mono">Transaction Hash</div>
+                                        <a 
+                                            href={voyagerUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="font-mono text-xs text-purple-400 hover:text-purple-300 break-all transition-colors"
+                                        >
+                                            {txHash}
+                                        </a>
+                                    </div>
+                                    <a 
+                                        href={voyagerUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-xs text-purple-500 hover:text-purple-400 underline inline-flex items-center gap-1"
+                                    >
+                                        View on Voyager →
+                                    </a>
+                                </div>
+                            )}
+
+                            {/* Summary Stats */}
+                            <div className="grid grid-cols-2 gap-3 pt-2">
+                                <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-3">
+                                    <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">Amount Locked</div>
+                                    <div className="text-lg font-bold text-green-400 font-mono">{amount} BTC</div>
+                                </div>
+                                <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-3">
+                                    <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">Status</div>
+                                    <div className="text-lg font-bold text-green-400">Minted ✓</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="pt-4 flex justify-center">
+                            <Button onClick={() => window.location.href = '/'} variant="outline" className="bg-btc-500/10 hover:bg-btc-500/20 text-btc-400 border-btc-500/30">
+                                Return to Dashboard
+                            </Button>
                         </div>
                     </CardContent>
                 </Card>

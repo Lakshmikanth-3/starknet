@@ -46,37 +46,58 @@ export async function detectBTCLock(
             const utxos = await response.json() as any[];
             console.log(`[BitcoinSignet] Found ${utxos.length} UTXOs`);
 
-            // Log all UTXOs for debugging
-            utxos.forEach((u, i) => {
-                console.log(`[BitcoinSignet] UTXO[${i}]: txid=${u.txid} value=${u.value} sats confirmed=${u.status?.confirmed}`);
+            // CRITICAL FIX: Sort FIRST to prioritize unconfirmed transactions
+            // This ensures unconfirmed (newest) are always at index [0]
+            console.log(`[BitcoinSignet] 🔄 Sorting ${utxos.length} UTXOs (unconfirmed first)...`);
+            const sorted = [...utxos].sort((a, b) => {
+                const aConfirmed = a.status?.confirmed || false;
+                const bConfirmed = b.status?.confirmed || false;
+                
+                // CRITICAL: Unconfirmed transactions come FIRST (newest deposits)
+                if (!aConfirmed && bConfirmed) return -1; // a first (unconfirmed = NEW)
+                if (aConfirmed && !bConfirmed) return 1;  // b first (unconfirmed = NEW)
+                
+                // If both unconfirmed, keep original order
+                if (!aConfirmed && !bConfirmed) return 0;
+                
+                // If both confirmed, sort by block height (higher = newer)
+                const aHeight = a.status?.block_height || 0;
+                const bHeight = b.status?.block_height || 0;
+                return bHeight - aHeight;
             });
 
-            // Flexible matching strategy:
-            // 1. Try exact match first
-            let match = utxos.find((utxo) => utxo.value === expectedSats);
+            // Log SORTED UTXOs for debugging
+            sorted.forEach((u, i) => {
+                const confirmStatus = u.status?.confirmed ? `confirmed (height: ${u.status.block_height})` : 'UNCONFIRMED ⚡';
+                console.log(`[BitcoinSignet] [${i}] ${confirmStatus} - ${u.txid.substring(0, 16)}... - ${u.value} sats`);
+            });
 
-            // 2. If no exact match, try approximate match (±1% tolerance for fees/dust)
+            // Flexible matching strategy on SORTED array:
+            // 1. Try exact match first (will prefer unconfirmed if available)
+            let match = sorted.find((utxo) => utxo.value === expectedSats);
+
+            // 2. If no exact match, try approximate match (±1% tolerance)
             if (!match) {
-                const tolerance = Math.max(1000, Math.round(expectedSats * 0.01)); // 1% or min 1000 sats
-                match = utxos.find((utxo) => 
+                const tolerance = Math.max(1000, Math.round(expectedSats * 0.01));
+                match = sorted.find((utxo) => 
                     Math.abs(utxo.value - expectedSats) <= tolerance
                 );
                 if (match) {
-                    console.log(`[BitcoinSignet] ⚠️ APPROXIMATE MATCH: expected ${expectedSats}, found ${match.value} (within ${tolerance} sats tolerance)`);
+                    console.log(`[BitcoinSignet] ⚠️ APPROXIMATE MATCH: expected ${expectedSats}, found ${match.value} (within ${tolerance} sats)`);
                 }
             }
 
-            // 3. If still no match, use the newest UTXO (most recent deposit)
-            if (!match && utxos.length > 0) {
-                // Sort by block_height descending (newest first), unconfirmed considered newest
-                const sorted = [...utxos].sort((a, b) => {
-                    const aHeight = a.status?.block_height || 999999999;
-                    const bHeight = b.status?.block_height || 999999999;
-                    return bHeight - aHeight;
-                });
+            // 3. If still no match, just take the first (newest/unconfirmed)
+            if (!match && sorted.length > 0) {
                 match = sorted[0];
-                console.log(`[BitcoinSignet] 📌 USING NEWEST UTXO: ${match.value} sats (txid=${match.txid.substring(0, 16)}...)`);
-                console.log(`[BitcoinSignet] ℹ️  Note: Expected ${expectedSats} sats, but allowing any amount for flexibility`);
+                console.log(`[BitcoinSignet] ℹ️ No amount match found, using newest UTXO`);
+            }
+
+            if (match) {
+                const confirmStatus = match.status?.confirmed ? `confirmed (height: ${match.status.block_height})` : 'UNCONFIRMED ⚡';
+                console.log(`[BitcoinSignet] ✅ SELECTED: ${confirmStatus}`);
+                console.log(`[BitcoinSignet] ✅ TXID: ${match.txid}`);
+                console.log(`[BitcoinSignet] ✅ Amount: ${match.value} sats (expected: ${expectedSats})`);
             }
 
             if (match) {

@@ -77,14 +77,19 @@ commitmentRouter.post('/deposit', strictLimiter, async (req: Request, res: Respo
             return;
         }
 
-        // 3. Store both hashes — Starknet + Bitcoin linked
+        // 3. Wait for transaction confirmation before storing
+        console.log(`[DEPOSIT] Waiting for transaction confirmation: ${txHash}`);
+        await StarknetService.waitForTransaction(txHash);
+        console.log(`[DEPOSIT] Transaction confirmed on Starknet: ${txHash}`);
+
+        // 4. Store both hashes — Starknet + Bitcoin linked with 'active' status
         const dbModule = await import('../db/schema');
         const db = dbModule.default;
         try {
             db.transaction(() => {
                 db.prepare(
                     `INSERT INTO vaults (id, owner_address, commitment, encrypted_amount, salt, randomness_hint, lock_duration_days, created_at, unlock_at, status, deposit_tx_hash, bitcoin_txid, nullifier_hash)
-                     VALUES (?, ?, ?, ?, ?, ?, 30, ?, ?, 'pending', ?, ?, ?)`
+                     VALUES (?, ?, ?, ?, ?, ?, 30, ?, ?, 'active', ?, ?, ?)`
                 ).run(vault_id, actualOwnerAddress, commitment, encryptedAmount, actualSalt, actualRandomnessHint, Date.now(), Date.now() + 86400, txHash, bitcoin_txid ?? null, actualNullifier);
 
                 db.prepare(
@@ -95,7 +100,7 @@ commitmentRouter.post('/deposit', strictLimiter, async (req: Request, res: Respo
         } catch (e: any) {
             if (e.message.includes('UNIQUE constraint')) {
                 db.transaction(() => {
-                    db.prepare(`UPDATE vaults SET deposit_tx_hash = ?, bitcoin_txid = ?, nullifier_hash = COALESCE(nullifier_hash, ?) WHERE id = ?`)
+                    db.prepare(`UPDATE vaults SET deposit_tx_hash = ?, bitcoin_txid = ?, nullifier_hash = COALESCE(nullifier_hash, ?), status = 'active' WHERE id = ?`)
                         .run(txHash, bitcoin_txid ?? null, actualNullifier, vault_id);
                     // Add to transactions on update if it somehow missed
                     try {
@@ -110,13 +115,14 @@ commitmentRouter.post('/deposit', strictLimiter, async (req: Request, res: Respo
             }
         }
 
-        console.log('[DEPOSIT] Stored vault record:', {
+        console.log('[DEPOSIT] Stored vault record with active status:', {
             vault_id,
             tx_hash: txHash,
             bitcoin_txid: bitcoin_txid ?? 'not provided',
+            status: 'active'
         });
 
-        // 4. Generate ZK proof (non-blocking background task)
+        // 5. Generate ZK proof (non-blocking background task)
         // Use secret+salt if provided; fall back to a deterministic pair derived from commitment
         let proofJobKey: string | null = null;
         const proofSecret = secret ?? commitment;              // commitment itself as the felt252 secret

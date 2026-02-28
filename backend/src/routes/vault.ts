@@ -273,15 +273,28 @@ vaultRouter.get('/balance/:address', async (req: Request, res: Response) => {
 vaultRouter.post(
     '/withdraw',
     strictLimiter,
-    validateBody(['secret', 'nullifier_hash']),
+    validateBody(['secret', 'nullifier_hash', 'bitcoin_address']),
     async (req: Request, res: Response) => {
-        const { secret, nullifier_hash } = req.body as { secret: string; nullifier_hash: string };
+        const { secret, nullifier_hash, bitcoin_address } = req.body as { 
+            secret: string; 
+            nullifier_hash: string;
+            bitcoin_address: string;
+        };
 
         try {
-            // 1. Find vault by nullifier to get the commitment
+            // 1. Validate Bitcoin address format (Signet testnet addresses start with 'tb1')
+            if (!bitcoin_address || !bitcoin_address.startsWith('tb1')) {
+                res.status(400).json({ 
+                    success: false, 
+                    error: 'Invalid Bitcoin address. Must be a Signet testnet address (starts with tb1)' 
+                });
+                return;
+            }
+
+            // 2. Find vault by nullifier to get the commitment
             const vault = db
-                .prepare<string, { id: string; commitment: string; status: string }>(
-                    'SELECT id, commitment, status FROM vaults WHERE nullifier_hash = ?'
+                .prepare<string, { id: string; commitment: string; status: string; withdraw_tx_hash: string | null }>(
+                    'SELECT id, commitment, status, withdraw_tx_hash FROM vaults WHERE nullifier_hash = ?'
                 )
                 .get(nullifier_hash);
 
@@ -290,57 +303,140 @@ vaultRouter.post(
                 return;
             }
 
-            if (vault.status !== 'active') {
-                res.status(400).json({ success: false, error: `Vault is ${vault.status} — cannot withdraw` });
+            // Check if this is a retry (Starknet withdrawal already done, just need Bitcoin payout)
+            const isRetry = vault.withdraw_tx_hash !== null;
+
+            if (vault.status === 'withdrawn') {
+                res.status(400).json({ 
+                    success: false, 
+                    error: 'Vault is already fully withdrawn. Both Starknet and Bitcoin payouts completed.' 
+                });
                 return;
             }
 
-            // 2. Generate ZK Proof locally via Scarb/Stwo (off-chain attestation)
-            // The local proof proves knowledge of (secret, commitment, nullifier)
-            // It is stored/logged as a cryptographic attestation of valid withdrawal.
+            if (vault.status !== 'active' && !isRetry) {
+                res.status(400).json({ 
+                    success: false, 
+                    error: `Vault is ${vault.status} — cannot withdraw` 
+                });
+                return;
+            }
+
+            console.log(`[WITHDRAW] ${isRetry ? 'RETRY MODE: Starknet withdrawal already done, will only send Bitcoin' : 'FULL WITHDRAWAL: Will do Starknet + Bitcoin'}`);
+
+            let txHash = vault.withdraw_tx_hash; // Use existing if retry
             let localProofGenerated = false;
-            try {
-                const _proof = await SharpService.generateWithdrawProof(secret, vault.commitment, nullifier_hash);
-                localProofGenerated = true;
-                console.log(`[WITHDRAW] ✅ Local ZK proof generated (Stwo/Scarb). Length: ${_proof.length}`);
-            } catch (proofErr: any) {
-                console.error('[WITHDRAW] ⚠️ Local proof generation failed:', proofErr.message);
-                // Non-fatal: the nullifier check + secret verification still provide security
+
+            // Only do Starknet withdrawal if not already done
+            if (!isRetry) {
+                // 3. Generate ZK Proof locally via Scarb/Stwo (off-chain attestation)
+                // The local proof proves knowledge of (secret, commitment, nullifier)
+                // It is stored/logged as a cryptographic attestation of valid withdrawal.
+                try {
+                    const _proof = await SharpService.generateWithdrawProof(secret, vault.commitment, nullifier_hash);
+                    localProofGenerated = true;
+                    console.log(`[WITHDRAW] ✅ Local ZK proof generated (Stwo/Scarb). Length: ${_proof.length}`);
+                } catch (proofErr: any) {
+                    console.error('[WITHDRAW] ⚠️ Local proof generation failed:', proofErr.message);
+                    // Non-fatal: the nullifier check + secret verification still provide security
+                }
+
+                // 4. Submit withdrawal transaction on Starknet
+                // The vault contract checks: proof.len() > 0 (MVP - no on-chain ZK verification yet)
+                // We pass [nullifierHash] as the 1-element felt252 proof sentinel.
+                const onChainProof = [nullifier_hash]; // satisfies `assert(proof.len() > 0)`
+
+                // Fetch amount and recipient from DB vault record
+                const vaultDetails = db.prepare('SELECT encrypted_amount, salt, owner_address FROM vaults WHERE id = ?').get(vault.id) as any;
+                const amountSats = CryptoService.decryptAmount(vaultDetails.encrypted_amount, vaultDetails.salt);
+
+                console.log(`[WITHDRAW] Amount to withdraw: ${Number(amountSats) / 1e18} BTC (${amountSats} sats in Wei)`);
+
+                // Validate owner_address
+                if (!vaultDetails.owner_address || vaultDetails.owner_address === '0x0' || !CryptoService.isValidAddress(vaultDetails.owner_address)) {
+                    res.status(400).json({ success: false, error: 'Invalid owner address in vault record' });
+                    return;
+                }
+
+                txHash = await StarknetService.withdraw({
+                    nullifierHash: nullifier_hash,
+                    proof: onChainProof,
+                    recipient: vaultDetails.owner_address,
+                    amount: amountSats
+                });
+
+                console.log(`[WITHDRAW] ✅ Starknet withdrawal successful: ${txHash}`);
+            } else {
+                console.log(`[WITHDRAW] ⏭️ Skipping Starknet withdrawal (already done): ${txHash}`);
             }
-
-            // 3. Submit withdrawal transaction on Starknet
-            // The vault contract checks: proof.len() > 0 (MVP - no on-chain ZK verification yet)
-            // We pass [nullifierHash] as the 1-element felt252 proof sentinel.
-            const onChainProof = [nullifier_hash]; // satisfies `assert(proof.len() > 0)`
-
-            // Fetch amount and recipient from DB vault record
-            const vaultDetails = db.prepare('SELECT encrypted_amount, salt, owner_address FROM vaults WHERE id = ?').get(vault.id) as any;
+            // 5. Send actual Bitcoin back to user's Bitcoin address (always attempt, even on retry)
+            const vaultDetails = db.prepare('SELECT encrypted_amount, salt FROM vaults WHERE id = ?').get(vault.id) as any;
             const amountSats = CryptoService.decryptAmount(vaultDetails.encrypted_amount, vaultDetails.salt);
+            const amountBTC = Number(amountSats) / 1e18;
 
-            // Validate owner_address
-            if (!vaultDetails.owner_address || vaultDetails.owner_address === '0x0' || !CryptoService.isValidAddress(vaultDetails.owner_address)) {
-                res.status(400).json({ success: false, error: 'Invalid owner address in vault record' });
-                return;
+            console.log(`[WITHDRAW] 💰 Sending ${amountBTC} BTC to ${bitcoin_address}...`);
+            
+            let bitcoinTxid: string | null = null;
+            let bitcoinSendError: string | null = null;
+            
+            try {
+                const { BitcoinBroadcastService } = await import('../services/BitcoinBroadcastService');
+                // Convert back to satoshis for Bitcoin transaction (assuming amountSats was in Wei, divide by 1e10 to get actual sats)
+                const actualSats = Math.floor(Number(amountSats) / 1e10);
+                console.log(`[WITHDRAW] Converting ${amountSats} Wei → ${actualSats} sats for Bitcoin transaction`);
+                
+                bitcoinTxid = await BitcoinBroadcastService.sendBitcoinToAddress(bitcoin_address, actualSats);
+                console.log(`[WITHDRAW] ✅ Bitcoin sent! TXID: ${bitcoinTxid}`);
+            } catch (btcErr: any) {
+                console.error('[WITHDRAW] ❌ Bitcoin sending failed:', btcErr.message);
+                bitcoinSendError = btcErr.message;
+                // Non-fatal: Starknet withdrawal succeeded, but Bitcoin payout failed
+                // Vault remains active so user can retry Bitcoin payout
             }
 
-            const txHash = await StarknetService.withdraw({
-                nullifierHash: nullifier_hash,
-                proof: onChainProof,
-                recipient: vaultDetails.owner_address,
-                amount: amountSats
+            // 6. Update DB status - only set to 'withdrawn' if Bitcoin was sent successfully
+            const finalStatus = bitcoinTxid ? 'withdrawn' : 'active';
+            
+            if (isRetry) {
+                // For retries, only update status if Bitcoin succeeded
+                if (bitcoinTxid) {
+                    db.prepare(`UPDATE vaults SET status = 'withdrawn' WHERE id = ?`).run(vault.id);
+                    console.log(`[WITHDRAW] Retry successful! Vault status updated to: withdrawn`);
+                } else {
+                    console.log(`[WITHDRAW] Retry failed, vault remains active for another retry`);
+                }
+            } else {
+                // First attempt - update withdraw_tx_hash and bitcoin_withdrawal_address
+                db.prepare(`
+                    UPDATE vaults 
+                    SET status = ?, 
+                        withdraw_tx_hash = ?, 
+                        bitcoin_withdrawal_address = ?
+                    WHERE id = ?
+                `).run(finalStatus, txHash, bitcoin_address, vault.id);
+                console.log(`[WITHDRAW] Vault status updated to: ${finalStatus}`);
+            }
+
+            // 7. Add to transactions table for Audit syncing (only if not retry)
+            if (!isRetry) {
+                db.prepare(`
+                    INSERT INTO transactions (id, vault_id, tx_hash, type, amount_encrypted, timestamp)
+                    VALUES (?, ?, ?, 'withdraw', (SELECT encrypted_amount FROM vaults WHERE id = ?), ?)
+                `).run(uuidv4(), vault.id, txHash, vault.id, Math.floor(Date.now() / 1000));
+            }
+
+            res.status(200).json({ 
+                success: true, 
+                txHash, 
+                localProofGenerated: isRetry ? false : localProofGenerated,
+                bitcoinTxid,
+                bitcoinSendError,
+                isRetry,
+                message: bitcoinTxid 
+                    ? `✅ Withdrawal complete! Bitcoin sent to ${bitcoin_address}` 
+                    : `⚠️ ${isRetry ? 'Bitcoin retry failed' : 'Starknet withdrawal succeeded but Bitcoin payout failed'}: ${bitcoinSendError}. You can retry withdrawal to complete Bitcoin payout.`,
+                canRetry: !bitcoinTxid
             });
-
-            // 4. Update DB status strictly so we don't double spend
-            db.prepare(`UPDATE vaults SET status = 'withdrawn', withdraw_tx_hash = ? WHERE id = ?`)
-                .run(txHash, vault.id);
-
-            // 5. Add to transactions table for Audit syncing
-            db.prepare(`
-                INSERT INTO transactions (id, vault_id, tx_hash, type, amount_encrypted, timestamp)
-                VALUES (?, ?, ?, 'withdraw', (SELECT encrypted_amount FROM vaults WHERE id = ?), ?)
-            `).run(uuidv4(), vault.id, txHash, vault.id, Math.floor(Date.now() / 1000));
-
-            res.status(200).json({ success: true, txHash, localProofGenerated });
         } catch (err) {
             console.error('withdraw error:', err);
             res.status(500).json({

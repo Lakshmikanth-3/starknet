@@ -19,6 +19,7 @@ export default function WithdrawPage() {
 
     const [secret, setSecret] = useState("");
     const [nullifier, setNullifier] = useState("");
+    const [bitcoinAddress, setBitcoinAddress] = useState("");
 
     const [proofParams, setProofParams] = useState<any>(null);
 
@@ -29,7 +30,16 @@ export default function WithdrawPage() {
 
     const handleWithdraw = async () => {
         if (!secret || !nullifier) {
-            toast({ title: "Missing Data", description: "Provide both the secret and nullifier.", variant: "destructive" });
+            toast({ title: "Missing Data", description: "Provide secret and nullifier.", variant: "destructive" });
+            return;
+        }
+
+        if (!bitcoinAddress || !bitcoinAddress.startsWith('tb1')) {
+            toast({ 
+                title: "Invalid Bitcoin Address", 
+                description: "Please enter a valid Signet testnet address (starts with tb1).", 
+                variant: "destructive" 
+            });
             return;
         }
 
@@ -41,16 +51,34 @@ export default function WithdrawPage() {
                 variant: "default"
             });
 
-            // Calls the backend to sequence ZK Proof generation -> Starknet Withdrawal
-            const res = await api.withdrawCommitment({ secret, nullifier_hash: nullifier } as any);
+            // Calls the backend to sequence ZK Proof generation -> Starknet Withdrawal -> Bitcoin Payout
+            const res = await api.withdrawCommitment({ 
+                secret, 
+                nullifier_hash: nullifier,
+                bitcoin_address: bitcoinAddress 
+            } as any);
 
             setProofParams({
                 nullifier_hash: nullifier,
                 proof_data: 'Processed securely via Backend Relayer',
-                txHash: res.txHash || 'Unknown'
+                txHash: res.txHash || 'Unknown',
+                bitcoinTxid: res.bitcoinTxid || 'Pending',
+                bitcoinAddress: bitcoinAddress
             });
 
-            toast({ title: "Withdrawal Successful!", description: `Starknet TX: ${res.txHash}`, variant: "success" });
+            if (res.bitcoinTxid) {
+                toast({ 
+                    title: "Withdrawal Complete!", 
+                    description: `Bitcoin sent to ${bitcoinAddress.slice(0, 12)}...`, 
+                    variant: "success" 
+                });
+            } else {
+                toast({ 
+                    title: "Partial Success", 
+                    description: res.message || "Starknet withdrawal OK, but Bitcoin payout pending.", 
+                    variant: "default" 
+                });
+            }
         } catch (e: any) {
             toast({ title: "Withdrawal Failed", description: e.response?.data?.error || e.message || "API Error", variant: "destructive" });
         } finally {
@@ -99,6 +127,18 @@ export default function WithdrawPage() {
                                 onChange={(e) => setNullifier(e.target.value)}
                             />
                         </div>
+
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium text-zinc-300">Bitcoin Withdrawal Address (Signet)</label>
+                            <Input
+                                type="text"
+                                placeholder="tb1q..."
+                                className="font-mono text-sm text-zinc-300 bg-zinc-900/80 border-zinc-700 h-12 focus-visible:ring-btc-500 focus-visible:border-btc-500 rounded-xl transition-all"
+                                value={bitcoinAddress}
+                                onChange={(e) => setBitcoinAddress(e.target.value)}
+                            />
+                            <p className="text-xs text-zinc-500">Enter your Bitcoin Signet testnet address where you want to receive your BTC.</p>
+                        </div>
                     </div>
 
                     <div className="pt-2 border-t border-zinc-800 flex flex-col gap-3">
@@ -112,22 +152,63 @@ export default function WithdrawPage() {
                         <div className="animate-in fade-in space-y-4 pt-4">
                             <div className="flex items-start gap-3 p-4 rounded-lg bg-green-500/10 border border-green-500/20 text-green-500 text-sm">
                                 <ShieldAlert className="h-5 w-5 shrink-0" />
-                                <p><strong>REAL PROOF:</strong> The Cairo 0 Prover output was processed successfully and securely verified by the system.</p>
+                                <p><strong>WITHDRAWAL COMPLETE:</strong> The ZK proof was verified and your MockBTC was burned on Starknet. {proofParams.bitcoinTxid ? 'Bitcoin has been sent to your address!' : 'Bitcoin payout is pending.'}</p>
                             </div>
 
-                            <div className="p-4 rounded-lg bg-zinc-950 border border-zinc-800 space-y-2">
-                                <div className="flex items-center gap-2 text-zinc-400 text-xs uppercase tracking-wider font-semibold mb-2">
-                                    <Cpu className="h-4 w-4" /> ZK Proof & Transaction Status
+                            {/* Starknet Transaction */}
+                            <div className="p-4 rounded-lg bg-purple-500/10 border border-purple-500/20 space-y-3">
+                                <div className="flex items-center gap-2 text-purple-400 text-xs uppercase tracking-wider font-semibold">
+                                    <Cpu className="h-4 w-4" /> Starknet Transaction
                                 </div>
-                                <div className="font-mono text-xs text-zinc-500 break-all">{proofParams.proof_data}</div>
                                 {proofParams.txHash && (
-                                    <div className="pt-2">
-                                        <a href={`https://sepolia.voyager.online/tx/${proofParams.txHash}`} target="_blank" className="font-mono text-xs text-orange-400 border border-orange-800 hover:bg-orange-950/30 px-3 py-1 rounded inline-block transition-all">
-                                            ↗ Verify on Voyager
+                                    <>
+                                        <div className="font-mono text-xs text-purple-300 break-all bg-zinc-950 p-3 rounded border border-purple-500/10">
+                                            {proofParams.txHash}
+                                        </div>
+                                        <a 
+                                            href={`https://sepolia.voyager.online/tx/${proofParams.txHash}`} 
+                                            target="_blank" 
+                                            rel="noopener noreferrer"
+                                            className="text-xs text-purple-400 hover:text-purple-300 underline"
+                                        >
+                                            View on Voyager →
                                         </a>
-                                    </div>
+                                    </>
                                 )}
                             </div>
+
+                            {/* Bitcoin Transaction */}
+                            {proofParams.bitcoinTxid && proofParams.bitcoinTxid !== 'Pending' && (
+                                <div className="p-4 rounded-lg bg-orange-500/10 border border-orange-500/20 space-y-3">
+                                    <div className="flex items-center gap-2 text-orange-400 text-xs uppercase tracking-wider font-semibold">
+                                        <ArrowUpRight className="h-4 w-4" /> Bitcoin Payout
+                                    </div>
+                                    <div className="space-y-2">
+                                        <div className="text-xs text-orange-300/70">Transaction ID:</div>
+                                        <div className="font-mono text-xs text-orange-300 break-all bg-zinc-950 p-3 rounded border border-orange-500/10">
+                                            {proofParams.bitcoinTxid}
+                                        </div>
+                                        <div className="text-xs text-orange-300/70">Sent to:</div>
+                                        <div className="font-mono text-xs text-orange-300 break-all bg-zinc-950 p-3 rounded border border-orange-500/10">
+                                            {proofParams.bitcoinAddress}
+                                        </div>
+                                        <a 
+                                            href={`https://mempool.space/signet/tx/${proofParams.bitcoinTxid}`} 
+                                            target="_blank" 
+                                            rel="noopener noreferrer"
+                                            className="text-xs text-orange-400 hover:text-orange-300 underline"
+                                        >
+                                            View on Mempool.space →
+                                        </a>
+                                    </div>
+                                </div>
+                            )}
+
+                            {(!proofParams.bitcoinTxid || proofParams.bitcoinTxid === 'Pending') && (
+                                <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-sm">
+                                    <p>⚠️ <strong>Bitcoin Payout Pending:</strong> Starknet withdrawal succeeded, but Bitcoin sending failed. Please contact support with your withdrawal secret.</p>
+                                </div>
+                            )}
                         </div>
                     )}
 
