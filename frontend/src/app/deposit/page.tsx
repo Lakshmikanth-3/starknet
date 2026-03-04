@@ -55,14 +55,14 @@ export default function DepositPage() {
     const [senderBalanceInfo, setSenderBalanceInfo] = useState<string | null>(null);
 
     // Xverse Wallet Integration
-    const { 
-        isConnected: walletConnected, 
-        paymentAddress: walletAddress, 
+    const {
+        isConnected: walletConnected,
+        paymentAddress: walletAddress,
         isConnecting: walletConnecting,
         error: walletError,
-        connectWallet, 
-        disconnectWallet, 
-        sendBitcoin 
+        connectWallet,
+        disconnectWallet,
+        sendBitcoin
     } = useXverseWallet();
 
     // Check sender balance on mount
@@ -125,26 +125,34 @@ export default function DepositPage() {
                 console.log('[Poll] Response:', result);
 
                 if (result.locked || (result as any).detected) {
-                    // Success — stop polling and advance
-                    if (intervalRef.current) clearInterval(intervalRef.current);
-                    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-                    setIsScanning(false);
-
                     const detectedTxid = result.transactionId || (result as any).txid || "";
-                    console.log('[Poll] ✅ Detected TXID:', detectedTxid);
-                    console.log('[Poll] Full result:', JSON.stringify(result, null, 2));
-                    
+                    const curConfs = result.confirmations || 0;
+
                     if (!detectedTxid) {
                         console.error('[Poll] ❌ ERROR: No TXID in response!', result);
                         setScanError('Transaction detected but no TXID returned');
                         return;
                     }
-                    
-                    setBitcoinTx(detectedTxid);
-                    setConfirmations(result.confirmations || 0);
-                    setVoyagerUrl(result.mempool_url || `https://mempool.space/signet/tx/${detectedTxid}`);
-                    setStep(3);
-                    toast({ title: "Deposit Detected!", description: `Found BTC TX: ${detectedTxid.slice(0, 16)}...`, variant: "success" });
+
+                    // Advance to Step 3 if we haven't already
+                    if (step < 3) {
+                        setIsScanning(false);
+                        setBitcoinTx(detectedTxid);
+                        setConfirmations(curConfs);
+                        setVoyagerUrl(result.mempool_url || `https://mempool.space/signet/tx/${detectedTxid}`);
+                        setStep(3);
+                        toast({ title: "Deposit Detected!", description: `Found BTC TX: ${detectedTxid.slice(0, 16)}...`, variant: "success" });
+                    } else {
+                        // Just update confirmations
+                        setConfirmations(curConfs);
+                    }
+
+                    // Only stop polling when we have at least 1 confirmation
+                    if (curConfs >= 1) {
+                        console.log('[Poll] ✅ TX has 1+ confirmations, stopping poll.');
+                        if (intervalRef.current) clearInterval(intervalRef.current);
+                        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+                    }
                     return;
                 }
 
@@ -203,30 +211,30 @@ export default function DepositPage() {
         }
 
         setIsWalletSending(true);
-        
+
         try {
             const amountSats = Math.floor(parseFloat(amount) * 100_000_000);
             console.log(`[Deposit] 🚀 Starting wallet send: ${amountSats} sats (${amount} BTC) to ${depositAddress}`);
             console.log(`[Deposit] From address: ${walletAddress}`);
-            
+
             const txid = await sendBitcoin({
                 toAddress: depositAddress,
                 amountSats: amountSats
             });
-            
+
             console.log(`[Deposit] ✅ Transaction confirmed with TXID: ${txid}`);
-            
+
             // Always have a real TXID now
             toast({
                 title: "Bitcoin Sent Successfully! 🎉",
                 description: `TXID: ${txid.slice(0, 16)}...`,
                 variant: "success"
             });
-            
+
             // Use the TXID directly - no polling needed
             console.log('[Deposit] 📝 Using transaction TXID:', txid);
             startPolling(txid);
-            
+
         } catch (err: any) {
             console.error('[Deposit] ❌ Transaction error:', err);
             toast({
@@ -248,6 +256,17 @@ export default function DepositPage() {
         const hex = Array.from(randArray).map(b => b.toString(16).padStart(2, '0')).join('');
         setSecret("0x" + hex);
     }, []);
+
+    useEffect(() => {
+        if (step === 3 && bitcoinTx) {
+            if (confirmations >= 1) {
+                console.log('[Deposit] Step 3 with confirmations. Automatically verifying SPV on Starknet...');
+                handleSubmitStarknet();
+            } else {
+                console.log('[Deposit] Waiting for 1 block confirmation (SPV proof missing until mined)...');
+            }
+        }
+    }, [step, bitcoinTx, confirmations]);
 
     const handleGenerateCommitment = async () => {
         if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
@@ -293,22 +312,74 @@ export default function DepositPage() {
         setSubmitError(null);
 
         try {
-            console.log('[DEPOSIT] Calling backend relayer...');
-            const response = await fetch('http://localhost:3001/api/commitment/deposit', {
+            console.log('[DEPOSIT] Fetching SPV proof for TXID:', bitcoinTx);
+            const proofRes = await fetch(`http://localhost:3001/api/bridge/spv-proof?txid=${bitcoinTx}`);
+
+            if (!proofRes.ok) {
+                const errorData = await proofRes.json();
+                throw new Error(errorData.error || 'Failed to fetch SPV proof');
+            }
+
+            const proof = await proofRes.json();
+            console.log('[DEPOSIT] SPV Proof successfully generated:', proof);
+
+            // ✅ CRITICAL FIX: Check if header is available before submitting
+            console.log('[DEPOSIT] Checking if block header is relayed...');
+            try {
+                const headerCheckRes = await fetch(`http://localhost:3001/api/bridge/header-status?height=${proof.blockHeight}`);
+                
+                if (headerCheckRes.ok) {
+                    const headerStatus = await headerCheckRes.json();
+                    
+                    if (!headerStatus.isStored) {
+                        const waitTime = headerStatus.estimatedWaitSeconds || 60;
+                        toast({
+                            title: '⏳ Block Header Not Yet Relayed',
+                            description: `Waiting for Bitcoin block ${proof.blockHeight} to be relayed to Starknet. This may take up to 2 minutes. The backend will automatically wait for it.`,
+                            variant: 'default',
+                        });
+                        
+                        console.log(`[DEPOSIT] Header not ready yet. Backend will wait up to 2 minutes...`);
+                    } else {
+                        console.log('[DEPOSIT] ✅ Header is available. Proceeding with deposit...');
+                    }
+                }
+            } catch (headerErr) {
+                // Non-fatal: continue with deposit, backend will handle it
+                console.warn('[DEPOSIT] Could not check header status:', headerErr);
+            }
+
+            console.log('[DEPOSIT] Calling backend SPV relayer...');
+            const response = await fetch('http://localhost:3001/api/bridge/spv-deposit', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     vault_id: vaultId,
                     commitment: commitment,
-                    amount: Number(amount),
-                    bitcoin_txid: bitcoinTx || undefined,
+                    blockHeight: proof.blockHeight,
+                    txPos: proof.txPos,
+                    rawTxBytes: proof.rawTxBytes,
+                    voutIndex: proof.voutIndex,
+                    merkleProofWords: proof.merkleProofWords,
+                    bitcoin_txid: bitcoinTx,
+                    // ✅ CRITICAL FIX: Send secret and nullifier for database storage
                     secret: secret,
+                    nullifier_hash: nullifierHash,
+                    amount: parseFloat(amount),
                 })
             });
 
             if (!response.ok) {
                 const errorData = await response.json();
-                throw new Error(errorData.error || 'Relayer submission failed');
+                
+                // ✅ IMPROVED: Better error handling for header not relayed
+                if (errorData.code === 'HEADER_NOT_RELAYED') {
+                    throw new Error(
+                        `${errorData.error}\n\n${errorData.suggestion || 'The header relay service is syncing. Please wait 1-2 minutes and try again.'}`
+                    );
+                }
+                
+                throw new Error(errorData.error || 'SPV relayer submission failed. Ensure block header is relayed.');
             }
 
             const data = await response.json();
@@ -320,8 +391,8 @@ export default function DepositPage() {
             setStep(4);
 
             toast({
-                title: '✓ Global Shielding Initiated',
-                description: 'Relayer has broadcasted your commitment to Starknet Sepolia.',
+                title: '✓ SPV Proof Verified on Starknet',
+                description: 'Your Bitcoin SPV proof was verified on-chain, and mBTC has been minted to the vault.',
             });
         } catch (err: any) {
             setSubmitError(err.message);
@@ -599,16 +670,16 @@ export default function DepositPage() {
                                 <div className="h-3 w-3 bg-green-500 rounded-full animate-pulse"></div>
                                 <span className="text-sm font-bold text-green-400 uppercase tracking-wider">Bitcoin Transaction Confirmed</span>
                             </div>
-                            
+
                             {/* Full TXID Display */}
                             <div className="space-y-2">
                                 <div className="text-xs text-green-700/70 font-semibold uppercase tracking-wider">Real Bitcoin Transaction ID</div>
                                 {bitcoinTx ? (
                                     <>
                                         <div className="bg-zinc-950 border border-green-500/20 rounded-lg p-3 break-all">
-                                            <a 
-                                                href={`https://mempool.space/signet/tx/${bitcoinTx}`} 
-                                                target="_blank" 
+                                            <a
+                                                href={`https://mempool.space/signet/tx/${bitcoinTx}`}
+                                                target="_blank"
                                                 rel="noopener noreferrer"
                                                 className="font-mono text-xs text-green-400 hover:text-green-300 transition-colors"
                                             >
@@ -616,7 +687,7 @@ export default function DepositPage() {
                                             </a>
                                         </div>
                                         <div className="flex gap-2 items-center">
-                                            <a 
+                                            <a
                                                 href={`https://mempool.space/signet/tx/${bitcoinTx}`}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
@@ -794,10 +865,12 @@ export default function DepositPage() {
                         )}
                     </CardContent>
                     {!submitSuccess && (
-                        <CardFooter className="flex justify-end">
-                            <Button onClick={handleSubmitStarknet} disabled={isSubmitting} className="w-full bg-btc-500 hover:bg-btc-400 text-black font-bold h-12 rounded-xl shadow-[0_0_15px_rgba(246,147,26,0.3)] transition-all">
-                                {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                Submit to Starknet
+                        <CardFooter className="flex flex-col items-center">
+                            <Button disabled className="w-full bg-btc-500 hover:bg-btc-400 text-black font-bold h-12 rounded-xl shadow-[0_0_15px_rgba(246,147,26,0.3)] transition-all">
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                {confirmations === 0
+                                    ? "Waiting for 1 Bitcoin Block (to generate SPV Proof)..."
+                                    : "Verifying SPV Proof on Starknet..."}
                             </Button>
                         </CardFooter>
                     )}
@@ -827,7 +900,7 @@ export default function DepositPage() {
                                     </div>
                                     <div className="bg-zinc-950 border border-orange-500/10 rounded-lg p-3 mb-3">
                                         <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1 font-mono">Transaction ID</div>
-                                        <a 
+                                        <a
                                             href={`https://mempool.space/signet/tx/${bitcoinTx}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
@@ -836,7 +909,7 @@ export default function DepositPage() {
                                             {bitcoinTx}
                                         </a>
                                     </div>
-                                    <a 
+                                    <a
                                         href={`https://mempool.space/signet/tx/${bitcoinTx}`}
                                         target="_blank"
                                         rel="noopener noreferrer"
@@ -855,7 +928,7 @@ export default function DepositPage() {
                                     </div>
                                     <div className="bg-zinc-950 border border-purple-500/10 rounded-lg p-3 mb-3">
                                         <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1 font-mono">Transaction Hash</div>
-                                        <a 
+                                        <a
                                             href={voyagerUrl}
                                             target="_blank"
                                             rel="noopener noreferrer"
@@ -864,7 +937,7 @@ export default function DepositPage() {
                                             {txHash}
                                         </a>
                                     </div>
-                                    <a 
+                                    <a
                                         href={voyagerUrl}
                                         target="_blank"
                                         rel="noopener noreferrer"

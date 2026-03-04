@@ -1,0 +1,34 @@
+﻿RPC URL : https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/...
+Account : 0x0054078d8ca0fe77c572ad15021a8bcc85b84f30a56a4a4e9ff721a0ba012ef1
+MockBTC : 0x0201c23ba72660516c987e8d11b8f6238b386f13099880cd1a8f5b065667343
+Artifacts: C:\Users\sl\OneDrive\Documents\Hackathons\starknet\contracts\target\dev
+
+Available contracts: HeaderStore, MockBTC, PrivateBTCVault
+
+≡ƒôª HeaderStore
+  Declaring...
+  Already declared. class_hash: 0x1931bc11ab8e22f4b1c0a55bcb4ad3c51bafe365482347adc532563cc7f7e24
+  Deploying...
+  Deploy tx: 0x3552baaf8429baa270e3b98d942d4fb1c5413b0cd4136ec167795d668ccedcb
+  Address: 0x6f189dc2a2bf6c5c8e4a671a904798ff95a09ad1dab257775249a49d8b75076
+  Voyager: https://sepolia.voyager.online/contract/0x6f189dc2a2bf6c5c8e4a671a904798ff95a09ad1dab257775249a49d8b75076
+
+≡ƒôª PrivateBTCVault
+  Declaring...
+  Already declared. class_hash: 0x2eaad0a286bd3f3b05fd5b8377e770773acf895ccdd931cdb0e220fb8f31455
+  Deploying...
+  Deploy tx: 0x171db856d07882cd9817d9d5d68d13bb96efcb1301f3bde15840a84f14bf12e
+  Address: 0x45b3d5c44035f7e88e4107e3dfe94dd59b5914a9cac7abb1029b067781f340f
+  Voyager: https://sepolia.voyager.online/contract/0x45b3d5c44035f7e88e4107e3dfe94dd59b5914a9cac7abb1029b067781f340f
+
+
+DEPLOYMENT COMPLETE
+===================
+Add these to backend/.env:
+
+HEADER_STORE_CONTRACT_ADDRESS=0x6f189dc2a2bf6c5c8e4a671a904798ff95a09ad1dab257775249a49d8b75076
+VAULT_CONTRACT_ADDRESS=0x45b3d5c44035f7e88e4107e3dfe94dd59b5914a9cac7abb1029b067781f340f
+VAULT_ADDR=0x45b3d5c44035f7e88e4107e3dfe94dd59b5914a9cac7abb1029b067781f340f
+
+And frontend/.env.local:
+NEXT_PUBLIC_VAULT_ADDRESS=0x45b3d5c44035f7e88e4107e3dfe94dd59b5914a9cac7abb1029b067781f340f

@@ -163,13 +163,49 @@ function initSchema(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_sharp_job_key ON sharp_proofs(job_key);
     CREATE INDEX IF NOT EXISTS idx_sharp_status  ON sharp_proofs(status);
+
+    -- ─────────────────────────────────────────────────────
+    -- WITHDRAWAL AUTHORIZATIONS TABLE
+    -- Security: Bitcoin can only be sent with valid authorization
+    -- Authorization is created ONLY after mBTC burn on Starknet
+    -- ─────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS withdrawal_authorizations (
+      id                    TEXT PRIMARY KEY,
+      vault_id              TEXT NOT NULL REFERENCES vaults(id),
+      nullifier_hash        TEXT NOT NULL UNIQUE,
+      starknet_tx_hash      TEXT NOT NULL UNIQUE,
+      bitcoin_address       TEXT NOT NULL,
+      amount_sats           INTEGER NOT NULL,
+      status                TEXT NOT NULL DEFAULT 'pending'
+                            CHECK(status IN ('pending', 'processing', 'completed', 'failed')),
+      created_at            INTEGER NOT NULL DEFAULT (unixepoch()),
+      confirmed_at          INTEGER,
+      bitcoin_txid          TEXT,
+      error_message         TEXT,
+      CHECK(starknet_tx_hash LIKE '0x%' AND length(starknet_tx_hash) >= 34),
+      CHECK(bitcoin_address LIKE 'tb1%')
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_auth_status ON withdrawal_authorizations(status);
+    CREATE INDEX IF NOT EXISTS idx_auth_nullifier ON withdrawal_authorizations(nullifier_hash);
+    CREATE INDEX IF NOT EXISTS idx_auth_vault ON withdrawal_authorizations(vault_id);
+    CREATE INDEX IF NOT EXISTS idx_auth_starknet_tx ON withdrawal_authorizations(starknet_tx_hash);
   `);
 
+  // Migrations for backward compatibility
   try {
     db.exec(`ALTER TABLE vaults ADD COLUMN bitcoin_txid TEXT DEFAULT NULL`);
   } catch (e: any) {
     if (!e.message.includes('duplicate column name')) {
-      console.error('Migration error:', e.message);
+      console.error('Migration error (bitcoin_txid):', e.message);
+    }
+  }
+
+  try {
+    db.exec(`ALTER TABLE vaults ADD COLUMN bitcoin_withdrawal_address TEXT DEFAULT NULL`);
+  } catch (e: any) {
+    if (!e.message.includes('duplicate column name')) {
+      console.error('Migration error (bitcoin_withdrawal_address):', e.message);
     }
   }
 }

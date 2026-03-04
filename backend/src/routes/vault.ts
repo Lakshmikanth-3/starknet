@@ -11,6 +11,7 @@ import { SharpService } from '../services/SharpService';
 import { validateTxHash } from '../middleware/validateTxHash';
 import { isValidStarknetAddress } from '../middleware/validators';
 import { isValidLockDuration, getApy } from '../config/apy';
+import { WithdrawalAuthorizationService } from '../services/WithdrawalAuthorizationService';
 import {
     TransactionNotFoundError,
     TransactionRevertedError,
@@ -369,29 +370,51 @@ vaultRouter.post(
             } else {
                 console.log(`[WITHDRAW] ⏭️ Skipping Starknet withdrawal (already done): ${txHash}`);
             }
-            // 5. Send actual Bitcoin back to user's Bitcoin address (always attempt, even on retry)
+
+            // 5. Create withdrawal authorization and attempt Bitcoin send
+            //    Bitcoin can ONLY be sent with a valid authorization linked to Starknet burn
             const vaultDetails = db.prepare('SELECT encrypted_amount, salt FROM vaults WHERE id = ?').get(vault.id) as any;
             const amountSats = CryptoService.decryptAmount(vaultDetails.encrypted_amount, vaultDetails.salt);
-            const amountBTC = Number(amountSats) / 1e18;
-
-            console.log(`[WITHDRAW] 💰 Sending ${amountBTC} BTC to ${bitcoin_address}...`);
+            const actualSats = Math.floor(Number(amountSats) / 1e10); // Convert Wei to actual sats
+            
+            console.log(`[WITHDRAW] 💰 Creating authorization for ${actualSats} sats to ${bitcoin_address}...`);
             
             let bitcoinTxid: string | null = null;
             let bitcoinSendError: string | null = null;
-            
+            let authorizationId: string | null = null;
+
             try {
+                // Check if authorization already exists (for retries)
+                let auth = WithdrawalAuthorizationService.getAuthorizationByNullifier(nullifier_hash);
+
+                if (!auth) {
+                    // Create new authorization - this is the security gate
+                    // Authorization can ONLY be created with a valid Starknet tx hash
+                    auth = WithdrawalAuthorizationService.createAuthorization({
+                        vaultId: vault.id,
+                        nullifierHash: nullifier_hash,
+                        starknetTxHash: txHash!,
+                        bitcoinAddress: bitcoin_address,
+                        amountSats: actualSats
+                    });
+                    console.log(`[WITHDRAW] ✅ Authorization created: ${auth.id}`);
+                } else {
+                    console.log(`[WITHDRAW] ⏭️ Using existing authorization: ${auth.id} (status: ${auth.status})`);
+                }
+
+                authorizationId = auth.id;
+
+                // Attempt to send Bitcoin using the authorization
+                // This will verify the authorization is valid before sending
                 const { BitcoinBroadcastService } = await import('../services/BitcoinBroadcastService');
-                // Convert back to satoshis for Bitcoin transaction (assuming amountSats was in Wei, divide by 1e10 to get actual sats)
-                const actualSats = Math.floor(Number(amountSats) / 1e10);
-                console.log(`[WITHDRAW] Converting ${amountSats} Wei → ${actualSats} sats for Bitcoin transaction`);
-                
-                bitcoinTxid = await BitcoinBroadcastService.sendBitcoinToAddress(bitcoin_address, actualSats);
+                bitcoinTxid = await BitcoinBroadcastService.sendBitcoinWithAuthorization(auth.id);
                 console.log(`[WITHDRAW] ✅ Bitcoin sent! TXID: ${bitcoinTxid}`);
+
             } catch (btcErr: any) {
                 console.error('[WITHDRAW] ❌ Bitcoin sending failed:', btcErr.message);
                 bitcoinSendError = btcErr.message;
-                // Non-fatal: Starknet withdrawal succeeded, but Bitcoin payout failed
-                // Vault remains active so user can retry Bitcoin payout
+                // Non-fatal: Starknet withdrawal succeeded, authorization created
+                // User can retry to complete Bitcoin payout
             }
 
             // 6. Update DB status - only set to 'withdrawn' if Bitcoin was sent successfully

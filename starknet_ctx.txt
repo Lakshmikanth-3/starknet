@@ -1,0 +1,15 @@
+rn createSierraContractClass(parsedContract);
+}
+function extractAbi(contract) {
+  return isString(contract.abi) ? parse2(contract.abi) : contract.abi;
+}
+var getDefaultNodeUrl = (networkName, mute = false, rpcVersion) => {
+  if (!mute) {
+    logger.info("Using default public node url, please provide nodeUrl in provider options!");
+  }
+  const rpcNodes = getDefaultNodes(rpcVersion ?? config.get("rpcVersion"));
+  const nodes = rpcNodes[networkName ?? _NetworkName.SN_SEPOLIA];
+  const randIdx = Math.floor(Math.random() * nodes.length);
+  return nodes[randIdx];
+};
+function getDefaultNodes(rpcVersio

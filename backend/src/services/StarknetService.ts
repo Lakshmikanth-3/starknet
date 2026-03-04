@@ -116,7 +116,7 @@ export class StarknetService {
     private static nextAttemptAt = 0;
     private static readonly THRESHOLD = 5;
     private static readonly RESET_TIMEOUT_MS = 60000; // 1 minute
-    private static readonly RPC_TIMEOUT_MS = 15000;    // 15 seconds
+    private static readonly RPC_TIMEOUT_MS = 30000;    // 30 seconds (increased from 15s for better reliability)
 
     /** RpcProvider singleton — uses STARKNET_RPC_URL from env */
     static getProvider(): RpcProvider {
@@ -167,14 +167,50 @@ export class StarknetService {
             this.circuitStatus = 'CLOSED';
             return result;
         } catch (err) {
-            // Failure: Update circuit
-            this.consecutiveFailures++;
-            console.error(`❌ RPC Failure (${this.consecutiveFailures}/${this.THRESHOLD}):`, err instanceof Error ? err.message : err);
+            const errMsg = err instanceof Error ? err.message : String(err);
+            
+            // Categorize errors - only count network/RPC errors toward circuit breaker
+            const isNetworkError = 
+                errMsg.includes('fetch failed') ||
+                errMsg.includes('timed out') ||
+                errMsg.includes('ECONNREFUSED') ||
+                errMsg.includes('ENOTFOUND') ||
+                errMsg.includes('EAI_AGAIN') ||
+                errMsg.includes('network') ||
+                errMsg.toLowerCase().includes('502') ||
+                errMsg.toLowerCase().includes('503') ||
+                errMsg.toLowerCase().includes('504');
+            
+            // Application errors (validation, insufficient balance, etc.) shouldn't trip circuit
+            const isApplicationError = 
+                errMsg.includes('insufficient') ||
+                errMsg.includes('Invalid transaction') ||
+                errMsg.includes('Validation failed') ||
+                errMsg.includes('Block header not relayed yet');
+            
+            // Only count network errors toward circuit breaker
+            if (isNetworkError && !isApplicationError) {
+                this.consecutiveFailures++;
+                console.error(`❌ RPC Failure (${this.consecutiveFailures}/${this.THRESHOLD}):`, errMsg);
 
-            if (this.consecutiveFailures >= this.THRESHOLD) {
-                this.circuitStatus = 'OPEN';
-                this.nextAttemptAt = Date.now() + this.RESET_TIMEOUT_MS;
-                console.error(`🚨 RPC Circuit TRIPPED: Entering OPEN state for ${this.RESET_TIMEOUT_MS / 1000}s`);
+                if (this.consecutiveFailures >= this.THRESHOLD) {
+                    this.circuitStatus = 'OPEN';
+                    this.nextAttemptAt = Date.now() + this.RESET_TIMEOUT_MS;
+                    console.error(`🚨 RPC Circuit TRIPPED: Entering OPEN state for ${this.RESET_TIMEOUT_MS / 1000}s`);
+                }
+            } else if (isApplicationError) {
+                // Application errors don't affect circuit, but log them
+                console.log(`[StarknetService] Application error (not affecting circuit):`, errMsg);
+            } else {
+                // Unknown error type - count it but log distinctly
+                this.consecutiveFailures++;
+                console.error(`❌ RPC Unknown Error (${this.consecutiveFailures}/${this.THRESHOLD}):`, errMsg);
+                
+                if (this.consecutiveFailures >= this.THRESHOLD) {
+                    this.circuitStatus = 'OPEN';
+                    this.nextAttemptAt = Date.now() + this.RESET_TIMEOUT_MS;
+                    console.error(`🚨 RPC Circuit TRIPPED: Entering OPEN state for ${this.RESET_TIMEOUT_MS / 1000}s`);
+                }
             }
 
             throw err;
@@ -192,64 +228,113 @@ export class StarknetService {
         });
     }
 
-    /** Execute the actual deposit (mint sBTC) on-chain via the relayer account */
+    /**
+     * executeDeposit — kept for backward compatibility with existing commitment.ts route.
+     * @deprecated Use executeSpvDeposit for the real SPV-gated deposit.
+     * This version is the old unrestricted mint+deposit multicall.
+     */
     static async executeDeposit(params: {
         commitment: string;
         amount: bigint;
         vault_id: string;
     }): Promise<string> {
-        return this.withResilience(async (provider) => {
+        return this.withResilience(async (_provider) => {
             const { WalletService } = await import('./WalletService');
-
             const account = WalletService.getAccount();
-            if (!account) {
-                throw new Error('INSUFFICIENT SEPOLIA ETH: No relayer account configured');
-            }
+            if (!account) throw new Error('INSUFFICIENT SEPOLIA ETH: No relayer account configured');
 
             const amountU256 = uint256.bnToUint256(params.amount);
-
-            // Correct vault.deposit(commitment: felt252) signature from Cairo contract.
-            // The vault doesn't transfer tokens itself - tokens must be sent to vault first.
-            // We use a 2-call multicall:
-            //   1. mockBtc.mint(vault, amount)     — mint tokens directly to vault
-            //   2. vault.deposit(commitment)       — record commitment on-chain
             const mintCall = {
                 contractAddress: config.MOCKBTC_CONTRACT_ADDRESS,
                 entrypoint: 'mint',
                 calldata: [
-                    config.VAULT_CONTRACT_ADDRESS,  // mint directly to vault
+                    config.VAULT_CONTRACT_ADDRESS,
                     amountU256.low.toString(),
                     amountU256.high.toString(),
-                ]
+                ],
             };
-
             const depositCall = {
                 contractAddress: config.VAULT_CONTRACT_ADDRESS,
                 entrypoint: 'deposit',
-                calldata: [
-                    params.commitment  // only commitment - matches Cairo signature
-                ]
+                calldata: [params.commitment],
             };
 
             try {
                 const nonce = await account.getNonce('latest');
                 console.log(`[StarknetService] Executing deposit multicall for commitment: ${params.commitment}`);
-
-                const response = await account.execute([mintCall, depositCall], {
-                    nonce
-                });
-
+                const response = await account.execute([mintCall, depositCall], { nonce });
                 console.log(`[StarknetService] Deposit tx sent. Hash: ${response.transaction_hash}`);
                 return response.transaction_hash;
             } catch (err: any) {
-                const errMsg = typeof err?.message === 'string'
-                    ? err.message
-                    : String(err ?? 'Unknown deposit execution error');
-                const errMsgLower = errMsg.toLowerCase();
-                if (errMsgLower.includes('balance is smaller') || errMsgLower.includes('insufficient')) {
+                const errMsg = typeof err?.message === 'string' ? err.message : String(err ?? 'Unknown');
+                if (errMsg.toLowerCase().includes('balance is smaller') || errMsg.toLowerCase().includes('insufficient')) {
                     throw new Error('INSUFFICIENT SEPOLIA ETH');
                 }
                 throw new Error(`Deposit execution failed: ${errMsg}`);
+            }
+        });
+    }
+
+    /**
+     * executeSpvDeposit — SPV-gated deposit.
+     * Calls vault.deposit(commitment, block_height, tx_pos, raw_tx, vout_index, merkle_proof).
+     * The vault verifies the Bitcoin Merkle proof on-chain before minting mBTC.
+     * No separate mint() call — the vault does it internally.
+     */
+    static async executeSpvDeposit(params: {
+        commitment: string;
+        blockHeight: number;
+        txPos: number;
+        rawTxBytes: number[];
+        voutIndex: number;
+        merkleProofWords: number[][];
+    }): Promise<string> {
+        return this.withResilience(async (_provider) => {
+            const { WalletService } = await import('./WalletService');
+            const account = WalletService.getAccount();
+            if (!account) throw new Error('INSUFFICIENT SEPOLIA ETH: No relayer account configured');
+
+            // Serialise u64 as (low: felt252, high: felt252)
+            const heightLow = BigInt(params.blockHeight).toString();
+            const txPosLow = BigInt(params.txPos).toString();
+
+            // Span<u8> → length prefix + each byte
+            const rawTxSpan = [
+                params.rawTxBytes.length.toString(),
+                ...params.rawTxBytes.map(b => b.toString()),
+            ];
+
+            // Span<[u32;8]> → length prefix + each set of 8 words
+            const merkleSpan = [
+                params.merkleProofWords.length.toString(),
+                ...params.merkleProofWords.flatMap(words => words.map(w => w.toString())),
+            ];
+
+            const calldata = [
+                params.commitment,
+                BigInt(params.blockHeight).toString(),
+                BigInt(params.txPos).toString(),
+                ...rawTxSpan,
+                params.voutIndex.toString(),
+                ...merkleSpan,
+            ];
+
+            const depositCall = {
+                contractAddress: config.VAULT_CONTRACT_ADDRESS,
+                entrypoint: 'deposit',
+                calldata,
+            };
+
+            try {
+                const nonce = await account.getNonce('latest');
+                console.log(`[StarknetService] Executing SPV deposit. commitment=${params.commitment}, height=${params.blockHeight}`);
+                const response = await account.execute([depositCall], { nonce });
+                console.log(`[StarknetService] SPV deposit tx sent. Hash: ${response.transaction_hash}`);
+                return response.transaction_hash;
+            } catch (err: any) {
+                const errMsg = typeof err?.message === 'string' ? err.message : String(err ?? 'Unknown');
+                if (errMsg.toLowerCase().includes('insufficient')) throw new Error('INSUFFICIENT SEPOLIA ETH');
+                throw new Error(`SPV deposit failed: ${errMsg}`);
             }
         });
     }
@@ -353,10 +438,12 @@ export class StarknetService {
      * Poll Starknet every 5 seconds until tx is SUCCEEDED.
      * Throws TransactionRevertedError if REVERTED.
      * Throws Error on timeout (maxAttempts exceeded).
+     * 
+     * ✅ INCREASED TIMEOUT: 60 attempts = 5 minutes for Sepolia testnet
      */
     static async waitForTransaction(
         txHash: string,
-        maxAttempts = 24
+        maxAttempts = 60  // Increased from 24 (2 min) to 60 (5 min) for slower testnets
     ): Promise<TransactionReceipt> {
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             console.log(`⏳ Attempt ${attempt}/${maxAttempts}: checking ${txHash}...`);
@@ -492,6 +579,38 @@ export class StarknetService {
             console.error(`isCommitmentOnChain error for ${commitment}:`, err);
             return false;
         });
+    }
+
+    /**
+     * Check if a Bitcoin block header has been relayed to HeaderStore contract.
+     * Returns true if the header is available, false otherwise.
+     * 
+     * CRITICAL FOR SPV DEPOSITS: The vault contract requires headers to be
+     * stored before accepting SPV proofs. This method prevents "Block header
+     * not relayed yet" errors by pre-checking availability.
+     */
+    static async isHeaderStored(blockHeight: number): Promise<boolean> {
+        const headerStoreAddr = process.env.HEADER_STORE_CONTRACT_ADDRESS;
+        if (!headerStoreAddr) {
+            console.warn('[StarknetService] HEADER_STORE_CONTRACT_ADDRESS not set');
+            return false;
+        }
+
+        try {
+            return await this.withResilience(async (provider) => {
+                const result = await provider.callContract({
+                    contractAddress: headerStoreAddr,
+                    entrypoint: 'is_header_stored',
+                    calldata: [blockHeight.toString()],
+                });
+                
+                // Result is a felt252 representing bool (0 = false, 1 = true)
+                return result[0] !== '0x0' && result[0] !== '0';
+            });
+        } catch (err) {
+            console.error(`[StarknetService] Failed to check header ${blockHeight}:`, err);
+            return false;
+        }
     }
 
     /**

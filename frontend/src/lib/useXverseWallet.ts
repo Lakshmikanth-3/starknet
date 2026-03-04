@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { 
-  AddressPurpose, 
-  BitcoinNetworkType, 
+import {
+  AddressPurpose,
+  BitcoinNetworkType,
   request,
   getAddress,
   signTransaction,
@@ -32,22 +32,14 @@ export const useXverseWallet = () => {
 
   // Check if wallet is already connected on mount
   useEffect(() => {
-    const savedPaymentAddress = localStorage.getItem('xverse_payment_address');
-    const savedOrdinalsAddress = localStorage.getItem('xverse_ordinals_address');
-    
-    if (savedPaymentAddress && savedOrdinalsAddress) {
-      setState(prev => ({
-        ...prev,
-        isConnected: true,
-        paymentAddress: savedPaymentAddress,
-        ordinalsAddress: savedOrdinalsAddress,
-      }));
-    }
+    // We intentionally removed localStorage auto-connect.
+    // Xverse throws "Address Mismatch" if the user switches accounts in the extension after we cache the address.
+    // It is safer to make them explicitly press Connect to sync the exact active address!
   }, []);
 
   const connectWallet = async () => {
     setState(prev => ({ ...prev, isConnecting: true, error: null }));
-    
+
     try {
       const response = await getAddress({
         payload: {
@@ -101,7 +93,7 @@ export const useXverseWallet = () => {
   const disconnectWallet = () => {
     localStorage.removeItem('xverse_payment_address');
     localStorage.removeItem('xverse_ordinals_address');
-    
+
     setState({
       isConnected: false,
       paymentAddress: null,
@@ -121,13 +113,13 @@ export const useXverseWallet = () => {
     return new Promise((resolve, reject) => {
       let isFinished = false;
       let timeoutId: NodeJS.Timeout | null = null;
-      
+
       try {
         console.log('[Xverse] 🚀 Initiating transaction...');
         console.log('[Xverse] From:', paymentAddress);
         console.log('[Xverse] To:', toAddress);
         console.log('[Xverse] Amount:', amountSats, 'sats');
-        
+
         // Extended timeout: wait 15 seconds for onFinish before falling back
         timeoutId = setTimeout(() => {
           if (!isFinished) {
@@ -137,7 +129,7 @@ export const useXverseWallet = () => {
             resolve('pending');
           }
         }, 15000);
-        
+
         const result = sendBtcTransaction({
           payload: {
             network: {
@@ -154,13 +146,13 @@ export const useXverseWallet = () => {
           onFinish: (response: any) => {
             console.log('[Xverse] 🎯 onFinish FIRED!');
             console.log('[Xverse] Response object:', JSON.stringify(response, null, 2));
-            
+
             if (!isFinished) {
               isFinished = true;
               if (timeoutId) clearTimeout(timeoutId);
-              
+
               const txid = response.txid || response.txId || response.transactionId || response.tx;
-              
+
               if (txid) {
                 console.log('[Xverse] ✅ Transaction confirmed!');
                 console.log('[Xverse] 🔗 TXID:', txid);
@@ -178,9 +170,9 @@ export const useXverseWallet = () => {
             console.log('[Xverse] 🕐 Waiting for onFinish or timeout...');
           },
         });
-        
+
         console.log('[Xverse] 📤 sendBtcTransaction returned:', result);
-        
+
       } catch (error: any) {
         if (!isFinished) {
           isFinished = true;

@@ -39,6 +39,7 @@ import { htlcRouter } from './routes/htlc';
 import { commitmentRouter } from './routes/commitment';
 import sharpRouter from './routes/sharp';
 import bridgeRouter from './routes/bridge';
+import { BitcoinHeaderRelayService } from './services/BitcoinHeaderRelayService';
 
 const app = express();
 
@@ -46,7 +47,7 @@ const app = express();
 app.use(helmet());
 app.use(cors({ origin: ['http://localhost:3000', 'http://127.0.0.1:3000'] }));
 app.use(morgan('combined'));
-app.use(express.json({ limit: '50kb' })); // Reject payloads > 50kb
+app.use(express.json({ limit: '2mb' })); // SPV raw tx calldata can be ~500kb as felt252 strings
 app.use(express.urlencoded({ extended: true }));
 
 // Apply General Limiter to all routes
@@ -69,6 +70,10 @@ app.get('/health', async (_req: Request, res: Response) => {
             dbConnected = false;
         }
 
+        // Get header relay status
+        const { BitcoinHeaderRelayService } = await import('./services/BitcoinHeaderRelayService');
+        const headerRelayStatus = BitcoinHeaderRelayService.getStatus();
+
         res.json({
             status: blockNumber > 0 ? 'ok' : 'degraded',
             starknet: {
@@ -77,6 +82,11 @@ app.get('/health', async (_req: Request, res: Response) => {
                 vaultContractReachable: vaultReachable,
                 mockBtcContractReachable: mockBtcReachable,
                 circuit: StarknetService.getCircuitState(),
+            },
+            headerRelay: {
+                running: headerRelayStatus.running,
+                lastRelayedHeight: headerRelayStatus.lastRelayedHeight,
+                pollIntervalSeconds: Math.round(headerRelayStatus.pollIntervalMs / 1000),
             },
             db: { connected: dbConnected },
             timestamp: Date.now(),
@@ -139,8 +149,16 @@ app.listen(config.PORT, () => {
     console.log(`₿   MockBTC:  ${config.MOCKBTC_CONTRACT_ADDRESS}`);
     console.log(`📊  DB:       ${config.DB_PATH}`);
     console.log(`🌍  Network:  ${config.NODE_ENV}`);
+    console.log(`🔗  HeaderStore: ${process.env.HEADER_STORE_CONTRACT_ADDRESS || '(not set — deploy then add to .env)'}`);
     console.log('🚀 ═══════════════════════════════════════════════════════════');
     console.log('');
+
+    // Start Bitcoin header relay (posts Signet block Merkle roots to HeaderStore contract)
+    if (process.env.HEADER_STORE_CONTRACT_ADDRESS) {
+        BitcoinHeaderRelayService.start();
+    } else {
+        console.warn('⚠️  HEADER_STORE_CONTRACT_ADDRESS not set — header relay disabled. Deploy HeaderStore first.');
+    }
 
     // Auto-sync: check all pending vaults against Starknet and activate confirmed ones
     setTimeout(async () => {

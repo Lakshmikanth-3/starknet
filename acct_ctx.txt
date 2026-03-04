@@ -1,0 +1,15 @@
+BlockTag.PRE_CONFIRMED });
+   * const myAccount = new Account({ provider: myProvider, address: accountAddress0, signer: privateKey0 });
+   * const resp = await myAccount.fastExecute(
+   *     call, { tip: recommendedTip},
+   *     { retries: 30, retryInterval: 500 });
+   * // if resp.isReady is true, you can launch immediately a new tx.
+   * ```
+   */
+  async fastExecute(transactions, transactionsDetail = {}, waitDetail = {}) {
+    assert(
+      this.channel.blockIdentifier === BlockTag.PRE_CONFIRMED,
+      "Provider needs to be initialized with `pre_confirmed` blockIdentifier option."
+    );
+    const initNonce = BigInt(
+      transactionsDe

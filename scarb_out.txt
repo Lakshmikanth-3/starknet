@@ -1,0 +1,2 @@
+   Compiling private_btc_core v0.1.0 (/mnt/c/Users/sl/OneDrive/Documents/Hackathons/starknet/contracts/Scarb.toml)
+    Finished `dev` profile target(s) in 3 seconds

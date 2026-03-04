@@ -1,0 +1,2 @@
+Don't focus on just submitting projects and in turn building mock features, focus on actual successful implementation of features.
+Don't mock anything (features, tools, etc.), simulate, or do anything fake unless told explicitly
