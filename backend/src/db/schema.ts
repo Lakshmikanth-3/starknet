@@ -165,6 +165,15 @@ function initSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_sharp_status  ON sharp_proofs(status);
 
     -- ─────────────────────────────────────────────────────
+    -- STARKNET PROOFS TABLE
+    -- ─────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS starknet_proofs (
+        authorization_id TEXT PRIMARY KEY,
+        proof_data TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+    );
+
+    -- ─────────────────────────────────────────────────────
     -- WITHDRAWAL AUTHORIZATIONS TABLE
     -- Security: Bitcoin can only be sent with valid authorization
     -- Authorization is created ONLY after mBTC burn on Starknet

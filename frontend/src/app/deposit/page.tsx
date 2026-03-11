@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Input } from "@/components/ui/input";
 import { toast } from "@/components/ui/toaster";
 import { cn } from "@/lib/utils";
-import { Loader2, ArrowRight, ShieldCheck, Download, Bitcoin, Wallet } from "lucide-react";
+import { Loader2, ArrowRight, ShieldCheck, Download, Bitcoin, Wallet, ExternalLink } from "lucide-react";
 import { useXverseWallet } from "@/lib/useXverseWallet";
 
 const VAULT_ADDRESS = process.env.NEXT_PUBLIC_VAULT_ADDRESS || "";
@@ -59,6 +59,7 @@ export default function DepositPage() {
         isConnected: walletConnected,
         paymentAddress: walletAddress,
         isConnecting: walletConnecting,
+        isInstalled: walletIsInstalled,
         error: walletError,
         connectWallet,
         disconnectWallet,
@@ -527,31 +528,86 @@ export default function DepositPage() {
                     <CardFooter className="flex flex-col gap-3">
                         {/* Xverse Wallet Connection Section */}
                         <div className="w-full space-y-3">
-                            {!walletConnected ? (
+                            {/* ── Not installed ── */}
+                            {walletIsInstalled === false && !walletConnected && (
+                                <div className="p-5 border-2 border-red-500/30 bg-gradient-to-br from-red-500/10 to-red-600/5 rounded-xl">
+                                    <div className="flex items-center gap-3 mb-3">
+                                        <Wallet className="h-5 w-5 text-red-400" />
+                                        <h3 className="text-sm font-bold text-red-100">Xverse Wallet Not Detected</h3>
+                                    </div>
+                                    <p className="text-xs text-red-200/70 mb-4">
+                                        Install the Xverse browser extension to send BTC directly. After installing, refresh this page.
+                                    </p>
+                                    <a
+                                        href="https://www.xverse.app/download"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="flex items-center justify-center gap-2 w-full bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-bold h-12 rounded-xl shadow-lg transition-all"
+                                    >
+                                        <ExternalLink className="h-4 w-4" />
+                                        Install Xverse Wallet
+                                    </a>
+                                    <p className="text-[10px] text-red-300/50 text-center mt-2">
+                                        Or send BTC manually using the options below ↓
+                                    </p>
+                                </div>
+                            )}
+
+                            {/* ── Installed but not connected ── */}
+                            {(walletIsInstalled === true || walletIsInstalled === null) && !walletConnected && (
                                 <div className="p-5 border-2 border-orange-500/40 bg-gradient-to-br from-orange-500/10 to-orange-600/5 rounded-xl">
                                     <div className="flex items-center gap-3 mb-3">
                                         <Wallet className="h-5 w-5 text-orange-400" />
                                         <h3 className="text-sm font-bold text-orange-100">Connect Xverse Wallet</h3>
                                     </div>
-                                    <p className="text-xs text-orange-200/70 mb-4">
-                                        Connect your Xverse wallet to send Bitcoin directly from your browser without copying addresses!
-                                    </p>
+
+                                    {/* Step-by-step Signet setup — prominent */}
+                                    <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg space-y-1.5">
+                                        <p className="text-xs font-bold text-red-300 uppercase tracking-wider mb-2">⚠️ Required: Switch Xverse to Signet First</p>
+                                        <div className="text-[11px] text-red-200/80 space-y-1">
+                                            <p>1. Click the <strong className="text-red-100">Xverse icon</strong> in your browser toolbar</p>
+                                            <p>2. At the top, click the current network (e.g. <strong className="text-red-100">"Bitcoin"</strong> or <strong className="text-red-100">"Mainnet"</strong>)</p>
+                                            <p>3. Select <strong className="text-red-100">"Bitcoin Signet"</strong></p>
+                                            <p>4. Hard refresh this page: <strong className="text-red-100">Cmd+Shift+R</strong></p>
+                                        </div>
+                                        <p className="text-[10px] text-red-300/50 pt-1 border-t border-red-500/20">
+                                            If Xverse is already on Signet, also try: Brave → Settings → Wallet → disable Brave Wallet → hard refresh.
+                                        </p>
+                                    </div>
+
                                     <Button
                                         onClick={connectWallet}
-                                        disabled={walletConnecting}
+                                        disabled={walletConnecting || walletIsInstalled === null}
                                         className="w-full bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white font-bold h-12 rounded-xl shadow-lg transition-all"
                                     >
                                         {walletConnecting ? (
-                                            <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Connecting...</>
+                                            <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Waiting for Xverse popup…</>
+                                        ) : walletIsInstalled === null ? (
+                                            <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Detecting wallet...</>
                                         ) : (
                                             <><Wallet className="mr-2 h-4 w-4" /> Connect Xverse Wallet</>
                                         )}
                                     </Button>
+                                    {walletConnecting && (
+                                        <p className="text-[11px] text-orange-300/70 text-center mt-2">
+                                            A popup should appear from the Xverse extension. If nothing happens after a few seconds, Xverse is on the wrong network.
+                                        </p>
+                                    )}
                                     {walletError && (
-                                        <p className="text-xs text-red-400 mt-2">{walletError}</p>
+                                        <div className="mt-2 p-2.5 bg-red-500/10 border border-red-500/20 rounded-lg">
+                                            <p className="text-xs text-red-400 break-words">{walletError}</p>
+                                            {walletError.includes('timed out') && (
+                                                <p className="text-[10px] text-red-300/60 mt-1">← This confirms Xverse is on the wrong network. Switch to Signet and hard-refresh.</p>
+                                            )}
+                                        </div>
                                     )}
                                 </div>
-                            ) : (
+                            )}
+
+
+
+                            {/* ── Connected ── */}
+                            {walletConnected && (
                                 <div className="p-5 border-2 border-green-500/40 bg-gradient-to-br from-green-500/10 to-emerald-600/5 rounded-xl">
                                     <div className="flex items-center justify-between mb-3">
                                         <div className="flex items-center gap-2">
@@ -585,9 +641,8 @@ export default function DepositPage() {
                                             {isWalletSending && (
                                                 <div className="mt-3 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
                                                     <p className="text-xs text-blue-400 text-center">
-                                                        <span className="font-semibold">⏳ Processing Transaction</span>
-                                                        <br />
-                                                        <span className="text-blue-300/80">Confirm the transaction in Xverse. After confirming, you can close the popup - we'll automatically detect your transaction.</span>
+                                                        <span className="font-semibold">⏳ Waiting for Xverse popup</span><br />
+                                                        <span className="text-blue-300/80">Confirm the transaction in Xverse. After confirming, we&apos;ll automatically detect your transaction.</span>
                                                     </p>
                                                 </div>
                                             )}
@@ -596,6 +651,7 @@ export default function DepositPage() {
                                 </div>
                             )}
                         </div>
+
 
                         {/* Divider */}
                         {!hasSentBTC && (

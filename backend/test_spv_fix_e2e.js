@@ -125,10 +125,7 @@ async function testSpvProofWithFix(txid) {
         console.log(`🔍 Step 4: Verifying merkle proof...`);
         const txidHash = doubleSha256(rawTxBuf);
         const txidWords = hashToWords(txidHash);
-        const merkleProofWords = proofData.merkleProof.map(hex => {
-            const buf = Buffer.from(hex, 'hex');
-            return hashToWords(buf);
-        });
+        const merkleProofWords = proofData.merkleProofWords || proofData.merkleProof;
         
         const isValid = verifyMerkleProof(txidWords, merkleProofWords, proofData.txPos, merkleRootWords);
         

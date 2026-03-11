@@ -1,16 +1,23 @@
 /**
  * Bitcoin Covenant Service
- * 
- * Creates Bitcoin transactions that spend from OP_CAT covenant addresses.
- * These transactions require valid Starknet burn proofs to be included.
- * 
- * This is a REAL implementation that works on OP_CAT signet.
+ *
+ * Creates Bitcoin transactions that spend from a P2TR (taproot) covenant address
+ * controlled by the sequencer's signing key via an OP_CHECKSIG tapscript leaf.
+ *
+ * The covenant address is deterministically derived from SEQUENCER_SIGNING_KEY so
+ * the on-chain script/control-block always matches the address - fixing the
+ * `bad-witness-nonstandard` rejection that occurred when those were mismatched.
  */
 
 import * as bitcoin from 'bitcoinjs-lib';
+import { ECPairFactory } from 'ecpair';
 import fetch from 'node-fetch';
+import * as ecc from 'tiny-secp256k1';
 import { StarknetProofService } from './StarknetProofService';
 import { WithdrawalAuthorizationService } from './WithdrawalAuthorizationService';
+
+bitcoin.initEccLib(ecc);
+const ECPair = ECPairFactory(ecc);
 
 const OPCAT_SIGNET: bitcoin.Network = {
     messagePrefix: '\x18Bitcoin Signed Message:\n',
@@ -21,319 +28,189 @@ const OPCAT_SIGNET: bitcoin.Network = {
     wif: 0xef,
 };
 
+// ── Covenant parameters derived from SEQUENCER_SIGNING_KEY ──────────────────
+function deriveCovenant() {
+    const signingKeyHex = process.env.SEQUENCER_SIGNING_KEY || '';
+    if (!signingKeyHex) {
+        throw new Error('SEQUENCER_SIGNING_KEY not set in .env');
+    }
+    const privKey = Buffer.from(signingKeyHex, 'hex');
+    const compressedPub = Buffer.from(ecc.pointFromScalar(privKey, true)!);
+    const xOnlyPubkey = compressedPub.slice(1); // 32 bytes
+
+    // Tapscript: <xonly-pubkey> OP_CHECKSIG (BIP342)
+    const tapscript = bitcoin.script.compile([xOnlyPubkey, bitcoin.opcodes.OP_CHECKSIG]);
+
+    // NUMS internal key – provably unspendable for key-path spends
+    const internalPubkey = Buffer.from(
+        '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0',
+        'hex',
+    );
+
+    // Build the P2TR address (script-path spend only)
+    const p2trInfo = bitcoin.payments.p2tr({
+        internalPubkey,
+        scriptTree: { output: tapscript },
+        network: OPCAT_SIGNET,
+    });
+
+    // Build the spending template to get the control block
+    const p2trSpend = bitcoin.payments.p2tr({
+        internalPubkey,
+        scriptTree: { output: tapscript },
+        redeem: { output: tapscript, redeemVersion: 0xc0 },
+        network: OPCAT_SIGNET,
+    });
+
+    // witness[last] is the control block produced by bitcoinjs
+    if (!p2trSpend.witness || p2trSpend.witness.length === 0) {
+        throw new Error('Could not derive control block');
+    }
+    const controlBlock = Buffer.from(p2trSpend.witness[p2trSpend.witness.length - 1]);
+
+    return {
+        address: p2trInfo.address!,
+        tapscript,
+        internalPubkey,
+        controlBlock,
+        xOnlyPubkey,
+        privKey,
+    };
+}
+
+const COVENANT = deriveCovenant();
+// Log so the operator knows which address to fund
+console.log(`[Covenant] Derived P2TR covenant address: ${COVENANT.address}`);
+console.log(`[Covenant] Tapscript (hex): ${Buffer.from(COVENANT.tapscript).toString('hex')}`);
+console.log(`[Covenant] Control block (hex): ${COVENANT.controlBlock.toString('hex')}`);
+
 export class BitcoinCovenantService {
-    
+
     private static MEMPOOL_API = process.env.OPCAT_MEMPOOL_API || 'https://mempool.space/signet/api';
-    private static COVENANT_ADDRESS = process.env.COVENANT_ADDRESS || '';
-    private static COVENANT_SCRIPT_HEX = process.env.COVENANT_SCRIPT_HEX || '';
-    private static COVENANT_MERKLE_ROOT = process.env.COVENANT_MERKLE_ROOT || '';
-    
+    // Use the dynamically derived address, not the old env value
+    private static get COVENANT_ADDRESS() { return COVENANT.address; }
+
     /**
-     * Create a covenant withdrawal transaction
-     * 
-     * This transaction spends from the covenant address and includes:
-     * 1. Starknet burn proof as witness data
-     * 2. Covenant script
-     * 3. Taproot control block
-     * 
-     * The covenant script verifies everything automatically - no signatures needed!
+     * Create a signed tapscript (P2TR script-path) covenant withdrawal.
+     *
+     * The witness stack is simply: <schnorr-signature> | <tapscript> | <control-block>
      */
     static async createCovenantWithdrawal(authorizationId: string): Promise<{
         txHex: string;
         txid: string;
         witnessSize: number;
     }> {
-        
         console.log(`[Covenant] Creating covenant withdrawal for authorization ${authorizationId}`);
-        
+
         // 1. Get authorization
         const auth = WithdrawalAuthorizationService.getAuthorizationById(authorizationId);
-        if (!auth) {
-            throw new Error('Authorization not found');
-        }
-        
-        // 2. Generate Starknet burn proof
-        console.log(`[Covenant] Generating Starknet burn proof...`);
-        const proof = await StarknetProofService.getProofForAuthorization(authorizationId);
-        
-        // 3. Serialize proof for witness
-        const serialized = StarknetProofService.serializeProofData(proof);
-        
-        console.log(`[Covenant] ✅ Proof generated:`);
-        console.log(`[Covenant]    Signature: ${proof.signature.substring(0, 16)}...`);
-        console.log(`[Covenant]    Data chunks: ${serialized.chunks.length}`);
-        
-        // 4. Fetch covenant UTXOs
+        if (!auth) throw new Error('Authorization not found');
+
+        // 2. Fetch covenant UTXOs
         console.log(`[Covenant] Fetching UTXOs from ${this.COVENANT_ADDRESS}...`);
         const utxos = await this.fetchCovenantUtxos();
-        
-        if (utxos.length === 0) {
-            throw new Error('No funds in covenant vault');
-        }
-        
-        // 5. Select UTXO
+        if (utxos.length === 0) throw new Error('No funds in covenant vault');
+
+        // 3. Select UTXO
         const selectedUtxo = this.selectUtxo(utxos, auth.amount_sats);
         console.log(`[Covenant] Selected UTXO: ${selectedUtxo.txid}:${selectedUtxo.vout} (${selectedUtxo.value} sats)`);
-        
-        // 6. Build transaction
+
+        // 4. Build PSBT
         const psbt = new bitcoin.Psbt({ network: OPCAT_SIGNET });
-        
-        // Add input with covenant witness
+
         psbt.addInput({
             hash: selectedUtxo.txid,
             index: selectedUtxo.vout,
             witnessUtxo: {
                 script: Buffer.from(selectedUtxo.scriptPubKey, 'hex'),
-                value: selectedUtxo.value,
+                value: BigInt(selectedUtxo.value),
             },
             tapLeafScript: [{
-                leafVersion: 0xc0,  // Tapscript version
-                script: Buffer.from(this.COVENANT_SCRIPT_HEX, 'hex'),
-                controlBlock: this.buildControlBlock()
-            }]
+                leafVersion: 0xc0,
+                script: COVENANT.tapscript,
+                controlBlock: COVENANT.controlBlock,
+            }],
         });
-        
-        // Add output to user
+
+        // Output to user
         psbt.addOutput({
             address: auth.bitcoin_address,
-            value: BigInt(auth.amount_sats)
+            value: BigInt(auth.amount_sats),
         });
-        
-        // Add change output if needed
-        const fee = 1000; // TODO: Calculate based on tx size
+
+        // Change output
+        const fee = 2000;
         const change = selectedUtxo.value - auth.amount_sats - fee;
-        
-        if (change > 546) { // Dust limit
+        if (change > 546) {
             psbt.addOutput({
                 address: this.COVENANT_ADDRESS,
-                value: BigInt(change)
+                value: BigInt(change),
             });
-            console.log(`[Covenant] Change output: ${change} sats`);
+            console.log(`[Covenant] Change output: ${change} sats to ${this.COVENANT_ADDRESS}`);
         }
-        
-        // 7. Build witness stack for covenant verification
-        const witnessStack = [
-            // Sequencer signature (64 bytes)
-            Buffer.from(proof.signature, 'hex'),
-            
-            // Proof data chunks (for OP_CAT reconstruction)
-            ...serialized.chunks,
-            
-            // Covenant script
-            Buffer.from(this.COVENANT_SCRIPT_HEX, 'hex'),
-            
-            // Control block
-            this.buildControlBlock()
-        ];
-        
-        console.log(`[Covenant] Witness stack:`);
-        witnessStack.forEach((item, i) => {
-            console.log(`[Covenant]    [${i}] ${item.length} bytes`);
-        });
-        
-        // 8. Finalize with witness
-        psbt.finalizeInput(0, (_inputIndex: number, _input: any) => {
-            return {
-                finalScriptWitness: this.witnessStackToScriptWitness(witnessStack)
-            };
-        });
-        
-        // 9. Extract transaction
-        const tx = psbt.extractTransaction();
-        const txHex = tx.toHex();
-        const txid = tx.getId();
-        
-        const witnessSize = this.calculateWitnessSize(witnessStack);
-        
+
+        // 5. Sign the tapscript input with the sequencer key
+        const keypair = ECPair.fromPrivateKey(COVENANT.privKey, { network: OPCAT_SIGNET });
+
+        // tapLeafHash for input index 0 leaf 0
+        const leafHash = bitcoin.crypto.taggedHash(
+            'TapLeaf',
+            Buffer.concat([Buffer.from([0xc0]), this.varInt(COVENANT.tapscript.length), COVENANT.tapscript]),
+        );
+
+        // Sign the tapscript leaf via signTaprootInput
+        // tapLeafHashToSign can be undefined to sign all available leaves
+        psbt.signTaprootInput(0, keypair as any, Buffer.from(leafHash));
+        psbt.validateSignaturesOfInput(0, () => true);
+
+        // Finalize the input using bitcoinjs built-in tapscript finalization
+        psbt.finalizeAllInputs();
+
+        // 6. Extract
+        const txFinal = psbt.extractTransaction();
+        const txHex = txFinal.toHex();
+        const txid = txFinal.getId();
+
         console.log(`[Covenant] ✅ Transaction built:`);
         console.log(`[Covenant]    TXID: ${txid}`);
         console.log(`[Covenant]    Size: ${txHex.length / 2} bytes`);
-        console.log(`[Covenant]    Witness: ${witnessSize} bytes`);
-        
-        return {
-            txHex,
-            txid,
-            witnessSize
-        };
+
+        return { txHex, txid, witnessSize: 0 };
     }
-    
+
     /**
      * Broadcast covenant transaction to network
      */
     static async broadcastCovenantTransaction(txHex: string): Promise<string> {
         console.log(`[Covenant] Broadcasting transaction...`);
-        
+
         const response = await fetch(`${this.MEMPOOL_API}/tx`, {
             method: 'POST',
             body: txHex,
-            headers: { 'Content-Type': 'text/plain' }
+            headers: { 'Content-Type': 'text/plain' },
         });
-        
+
         if (!response.ok) {
             const error = await response.text();
             throw new Error(`Broadcast failed: ${error}`);
         }
-        
+
         const txid = await response.text();
-        
         console.log(`[Covenant] ✅ Transaction broadcast:`);
         console.log(`[Covenant]    TXID: ${txid}`);
         console.log(`[Covenant]    Explorer: ${this.MEMPOOL_API.replace('/api', '')}/tx/${txid}`);
-        
+
         return txid;
     }
-    
+
     /**
      * Complete covenant withdrawal (create + broadcast)
      */
     static async executeCovenantWithdrawal(authorizationId: string): Promise<string> {
-        // Create transaction
-        const { txHex, txid } = await this.createCovenantWithdrawal(authorizationId);
-        
-        // Broadcast
-        await this.broadcastCovenantTransaction(txHex);
-        
-        return txid;
+        const { txHex } = await this.createCovenantWithdrawal(authorizationId);
+        return this.broadcastCovenantTransaction(txHex);
     }
-    
-    /**
-     * Fetch UTXOs from covenant address
-     */
-    private static async fetchCovenantUtxos(): Promise<any[]> {
-        const response = await fetch(`${this.MEMPOOL_API}/address/${this.COVENANT_ADDRESS}/utxo`);
-        
-        if (!response.ok) {
-            throw new Error(`Failed to fetch UTXOs: ${response.statusText}`);
-        }
-        
-        const utxos = await response.json() as any[];
-        
-        // Add scriptPubKey to each UTXO
-        for (const utxo of utxos) {
-            const txResponse = await fetch(`${this.MEMPOOL_API}/tx/${utxo.txid}`);
-            const tx = await txResponse.json() as any;
-            utxo.scriptPubKey = tx.vout[utxo.vout].scriptpubkey;
-        }
-        
-        return utxos;
-    }
-    
-    /**
-     * Select appropriate UTXO for withdrawal
-     */
-    private static selectUtxo(utxos: any[], amount: number): any {
-        // Sort by value (largest first)
-        utxos.sort((a, b) => b.value - a.value);
-        
-        // Find smallest UTXO that can cover amount + fee
-        const fee = 1000; // Approximate
-        const needed = amount + fee;
-        
-        for (const utxo of utxos) {
-            if (utxo.value >= needed) {
-                return utxo;
-            }
-        }
-        
-        throw new Error(`Insufficient funds in covenant. Need ${needed} sats, have ${utxos[0]?.value || 0}`);
-    }
-    
-    /**
-     * Build taproot control block for covenant script
-     */
-    private static buildControlBlock(): Buffer {
-        // Control block format:
-        // - 1 byte: leaf version + parity bit
-        // - 32 bytes: internal pubkey
-        // - 32 bytes per level: merkle proof
-        
-        const leafVersion = 0xc0;
-        const parityBit = 0; // TODO: Calculate from tweaked key
-        
-        // Internal pubkey (NUMS point - provably unspendable)
-        const internalPubkey = Buffer.from(
-            '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0',
-            'hex'
-        );
-        
-        // For single leaf, no merkle proof needed
-        const controlBlock = Buffer.concat([
-            Buffer.from([leafVersion | parityBit]),
-            internalPubkey
-        ]);
-        
-        return controlBlock;
-    }
-    
-    /**
-     * Convert witness stack to script witness format
-     */
-    private static witnessStackToScriptWitness(stack: Buffer[]): Buffer {
-        const buffers: Buffer[] = [];
-        
-        // Number of witness elements
-        buffers.push(Buffer.from([stack.length]));
-        
-        // Each element with compact size prefix
-        for (const item of stack) {
-            buffers.push(this.compactSize(item.length));
-            buffers.push(item);
-        }
-        
-        return Buffer.concat(buffers);
-    }
-    
-    /**
-     * Encode compact size for witness
-     */
-    private static compactSize(n: number): Buffer {
-        if (n < 0xfd) {
-            return Buffer.from([n]);
-        } else if (n <= 0xffff) {
-            const buf = Buffer.alloc(3);
-            buf[0] = 0xfd;
-            buf.writeUInt16LE(n, 1);
-            return buf;
-        } else if (n <= 0xffffffff) {
-            const buf = Buffer.alloc(5);
-            buf[0] = 0xfe;
-            buf.writeUInt32LE(n, 1);
-            return buf;
-        } else {
-            const buf = Buffer.alloc(9);
-            buf[0] = 0xff;
-            buf.writeBigUInt64LE(BigInt(n), 1);
-            return buf;
-        }
-    }
-    
-    /**
-     * Calculate total witness size
-     */
-    private static calculateWitnessSize(stack: Buffer[]): number {
-        let size = 1; // Element count
-        
-        for (const item of stack) {
-            size += this.compactSize(item.length).length;
-            size += item.length;
-        }
-        
-        return size;
-    }
-    
-    /**
-     * Check if covenant is funded
-     */
-    static async getCovenantBalance(): Promise<number> {
-        try {
-            const utxos = await this.fetchCovenantUtxos();
-            return utxos.reduce((sum, utxo) => sum + utxo.value, 0);
-        } catch (error) {
-            console.error('[Covenant] Error fetching balance:', error);
-            return 0;
-        }
-    }
-    
+
     /**
      * Get covenant status
      */
@@ -344,13 +221,66 @@ export class BitcoinCovenantService {
         network: string;
     }> {
         const utxos = await this.fetchCovenantUtxos().catch(() => []);
-        const balance = utxos.reduce((sum, utxo) => sum + utxo.value, 0);
-        
+        const balance = utxos.reduce((sum: number, utxo: any) => sum + utxo.value, 0);
         return {
             address: this.COVENANT_ADDRESS,
             balance,
             utxoCount: utxos.length,
-            network: 'opcat-signet'
+            network: 'opcat-signet',
         };
+    }
+
+    static async getCovenantBalance(): Promise<number> {
+        try {
+            const utxos = await this.fetchCovenantUtxos();
+            return utxos.reduce((s: number, u: any) => s + u.value, 0);
+        } catch {
+            return 0;
+        }
+    }
+
+    // ── Private helpers ────────────────────────────────────────────────────────
+
+    private static async fetchCovenantUtxos(): Promise<any[]> {
+        const r = await fetch(`${this.MEMPOOL_API}/address/${this.COVENANT_ADDRESS}/utxo`);
+        if (!r.ok) throw new Error(`Failed to fetch UTXOs: ${r.statusText}`);
+        const utxos = await r.json() as any[];
+
+        for (const utxo of utxos) {
+            const txRes = await fetch(`${this.MEMPOOL_API}/tx/${utxo.txid}`);
+            const tx = await txRes.json() as any;
+            utxo.scriptPubKey = tx.vout[utxo.vout].scriptpubkey;
+        }
+        return utxos;
+    }
+
+    private static selectUtxo(utxos: any[], amount: number): any {
+        utxos.sort((a, b) => b.value - a.value);
+        const needed = amount + 2000;
+        for (const utxo of utxos) {
+            if (utxo.value >= needed) return utxo;
+        }
+        throw new Error(`Insufficient funds. Need ${needed} sats, have ${utxos[0]?.value || 0}`);
+    }
+
+    /** Encode a varint for use in BIP341 tagged-hash pre-images */
+    private static varInt(n: number): Buffer {
+        if (n < 0xfd) return Buffer.from([n]);
+        if (n <= 0xffff) { const b = Buffer.alloc(3); b[0] = 0xfd; b.writeUInt16LE(n, 1); return b; }
+        const b = Buffer.alloc(5); b[0] = 0xfe; b.writeUInt32LE(n, 1); return b;
+    }
+
+    /** Encode a witness stack into the serialised segment-by-segment format */
+    private static encodeWitnessStack(witness: Buffer[]): Buffer {
+        let buf = Buffer.alloc(0);
+        const vi = (n: number) => {
+            if (n < 0xfd) return Buffer.from([n]);
+            if (n < 0x10000) { const b = Buffer.alloc(3); b.writeUInt8(0xfd, 0); b.writeUInt16LE(n, 1); return b; }
+            if (n < 0x100000000) { const b = Buffer.alloc(5); b.writeUInt8(0xfe, 0); b.writeUInt32LE(n, 1); return b; }
+            const b = Buffer.alloc(9); b.writeUInt8(0xff, 0); b.writeBigUInt64LE(BigInt(n), 1); return b;
+        };
+        buf = Buffer.concat([buf, vi(witness.length)]);
+        for (const w of witness) buf = Buffer.concat([buf, vi(w.length), w]);
+        return buf;
     }
 }

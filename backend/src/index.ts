@@ -40,6 +40,7 @@ import { commitmentRouter } from './routes/commitment';
 import sharpRouter from './routes/sharp';
 import bridgeRouter from './routes/bridge';
 import { BitcoinHeaderRelayService } from './services/BitcoinHeaderRelayService';
+import { WithdrawalProcessor } from './services/WithdrawalProcessor';
 
 const app = express();
 
@@ -159,6 +160,14 @@ app.listen(config.PORT, () => {
     } else {
         console.warn('⚠️  HEADER_STORE_CONTRACT_ADDRESS not set — header relay disabled. Deploy HeaderStore first.');
     }
+
+    // Start Withdrawal Processor automatically
+    const processor = new WithdrawalProcessor({
+        pollIntervalMs: parseInt(process.env.WITHDRAWAL_PROCESSOR_INTERVAL_MS || '30000'),
+        minConfirmations: parseInt(process.env.WITHDRAWAL_MIN_CONFIRMATIONS || '1'),
+        useCovenants: process.env.USE_OPCAT_COVENANTS === 'true'
+    });
+    processor.start().catch((err) => console.error('Failed to start WithdrawalProcessor:', err));
 
     // Auto-sync: check all pending vaults against Starknet and activate confirmed ones
     setTimeout(async () => {

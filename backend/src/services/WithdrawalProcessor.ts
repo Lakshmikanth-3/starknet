@@ -125,11 +125,16 @@ export class WithdrawalProcessor {
         console.log(`[WithdrawalProcessor]   Starknet TX: ${auth.starknet_tx_hash}`);
 
         try {
+            // 0. Mark as processing immediately to prevent any concurrent re-processing
+            WithdrawalAuthorizationService.updateStatus(auth.id, 'processing');
+
             // 1. Verify Starknet transaction is finalized
             const isFinalized = await this.verifyStarknetTransaction(auth.starknet_tx_hash);
             
             if (!isFinalized) {
                 console.log(`[WithdrawalProcessor] Starknet TX not finalized yet, skipping...`);
+                // Reset to pending so it gets retried next poll
+                WithdrawalAuthorizationService.updateStatus(auth.id, 'pending');
                 return;
             }
 
@@ -146,15 +151,17 @@ export class WithdrawalProcessor {
                 txid = await BitcoinBroadcastService.sendBitcoinWithAuthorization(auth.id);
             }
 
-            console.log(`[WithdrawalProcessor] Bitcoin sent successfully!`);
+            // ✅ CRITICAL: Mark as completed so it is NEVER processed again
+            WithdrawalAuthorizationService.updateStatus(auth.id, 'completed', txid);
+
+            console.log(`[WithdrawalProcessor] ✅ Bitcoin sent successfully!`);
             console.log(`[WithdrawalProcessor]   TXID: ${txid}`);
             console.log(`[WithdrawalProcessor]   View: https://mempool.space/signet/tx/${txid}`);
 
         } catch (error: any) {
             console.error(`[WithdrawalProcessor] Failed to process authorization ${auth.id}:`, error.message);
-            
-            // Authorization status is already updated by sendBitcoinWithAuthorization
-            // Just log the error here for visibility
+            // Reset to pending so it can be retried on next poll cycle
+            WithdrawalAuthorizationService.updateStatus(auth.id, 'pending');
         }
     }
 

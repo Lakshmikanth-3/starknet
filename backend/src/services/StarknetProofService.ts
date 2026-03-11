@@ -121,7 +121,8 @@ export class StarknetProofService {
         offset += 32;
         
         // Bytes 32-39: Amount in satoshis (8 bytes, little-endian)
-        buffer.writeBigUInt64LE(proof.amount, offset);
+        const amountBigInt = typeof proof.amount === 'string' ? BigInt(proof.amount) : proof.amount;
+        buffer.writeBigUInt64LE(amountBigInt, offset);
         offset += 8;
         
         // Bytes 40-71: Nullifier (32 bytes)
@@ -135,7 +136,8 @@ export class StarknetProofService {
         offset += 20;
         
         // Bytes 92-99: Block number (8 bytes, little-endian)
-        buffer.writeBigUInt64LE(proof.blockNumber, offset);
+        const blockNumberBigInt = typeof proof.blockNumber === 'string' ? BigInt(proof.blockNumber) : proof.blockNumber;
+        buffer.writeBigUInt64LE(blockNumberBigInt, offset);
         offset += 8;
         
         // Bytes 100-111: Reserved (12 bytes) - for future use
@@ -258,12 +260,16 @@ export class StarknetProofService {
             return null;
         }
         
-        // Parse event data (structure depends on your contract)
-        // Assuming: [amount_low, amount_high, nullifier, recipient, ...]
+        // Based on starknet receipt: 
+        // keys[0]: event name hash
+        // keys[1]: nullifier
+        // data[0]: recipient
+        // data[1]: amount_low
+        // data[2]: amount_high
         return {
-            amount: burnEvent.data[0] || '0', // Adjust indices based on your event structure
-            nullifier: burnEvent.data[2] || '0x0',
-            recipient: burnEvent.data[3] || '0x0'
+            amount: burnEvent.data[1] || '0', 
+            nullifier: burnEvent.keys?.[1] || burnEvent.data?.[2] || '0x0',
+            recipient: burnEvent.data[0] || '0x0'
         };
     }
     
@@ -282,9 +288,14 @@ export class StarknetProofService {
         }
         
         // Check if proof already exists in cache
-        const cached = db.prepare(`
-            SELECT proof_data FROM starknet_proofs WHERE authorization_id = ?
-        `).get(authorizationId) as any;
+        let cached = null;
+        try {
+            cached = db.prepare(`
+                SELECT proof_data FROM starknet_proofs WHERE authorization_id = ?
+            `).get(authorizationId) as any;
+        } catch (e) {
+            console.log(`[StarknetProof] Cache table starknet_proofs not initialized yet`);
+        }
         
         if (cached) {
             return JSON.parse(cached.proof_data);
@@ -309,7 +320,7 @@ export class StarknetProofService {
             db.prepare(`
                 INSERT OR REPLACE INTO starknet_proofs (authorization_id, proof_data, created_at)
                 VALUES (?, ?, ?)
-            `).run(authorizationId, JSON.stringify(proof), Math.floor(Date.now() / 1000));
+            `).run(authorizationId, JSON.stringify(proof, (_, v) => typeof v === 'bigint' ? v.toString() : v), Math.floor(Date.now() / 1000));
         } catch (error) {
             console.warn('[StarknetProof] Failed to cache proof:', error);
         }

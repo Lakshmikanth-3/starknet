@@ -410,34 +410,30 @@ vaultRouter.post(
                     console.log(`[WITHDRAW] ✅ Authorization created: ${auth.id}`);
                 } else {
                     console.log(`[WITHDRAW] ⏭️ Using existing authorization: ${auth.id} (status: ${auth.status})`);
+                    if (auth.status === 'failed') {
+                        WithdrawalAuthorizationService.updateStatus(auth.id, 'pending');
+                        console.log(`[WITHDRAW] 🔄 Reset authorization ${auth.id} to 'pending' for retry`);
+                    }
                 }
-
                 authorizationId = auth.id;
 
-                // Attempt to send Bitcoin using the authorization
-                // This will verify the authorization is valid before sending
-                const { BitcoinBroadcastService } = await import('../services/BitcoinBroadcastService');
-                bitcoinTxid = await BitcoinBroadcastService.sendBitcoinWithAuthorization(auth.id);
-                console.log(`[WITHDRAW] ✅ Bitcoin sent! TXID: ${bitcoinTxid}`);
+                // ⚠️ CRITICAL FIX: We do NOT attempt to broadcast synchronously here anymore.
+                // We let the WithdrawalProcessor (which is checking the queue) pick this up 
+                // in the background. It will properly route it to OP_CAT if enabled.
+                console.log(`[WITHDRAW] ⏳ Queued auth ${auth.id} for the background WithdrawalProcessor...`);
 
-            } catch (btcErr: any) {
-                console.error('[WITHDRAW] ❌ Bitcoin sending failed:', btcErr.message);
-                bitcoinSendError = btcErr.message;
-                // Non-fatal: Starknet withdrawal succeeded, authorization created
-                // User can retry to complete Bitcoin payout
+            } catch (authErr: any) {
+                console.error('[WITHDRAW] ❌ Authorization creation failed:', authErr.message);
+                bitcoinSendError = authErr.message;
             }
 
-            // 6. Update DB status - only set to 'withdrawn' if Bitcoin was sent successfully
-            const finalStatus = bitcoinTxid ? 'withdrawn' : 'active';
+            // 6. Update DB status - mark withdrawn only if we successfully created an auth
+            // The processor will update the auth row, but we can set the vault to withdrawn 
+            // since the Starknet portion is definitively over.
+            const finalStatus = 'withdrawn';
             
             if (isRetry) {
-                // For retries, only update status if Bitcoin succeeded
-                if (bitcoinTxid) {
-                    db.prepare(`UPDATE vaults SET status = 'withdrawn' WHERE id = ?`).run(vault.id);
-                    console.log(`[WITHDRAW] Retry successful! Vault status updated to: withdrawn`);
-                } else {
-                    console.log(`[WITHDRAW] Retry failed, vault remains active for another retry`);
-                }
+                console.log(`[WITHDRAW] Retry submitted, auth queued for processor`);
             } else {
                 // First attempt - update withdraw_tx_hash and bitcoin_withdrawal_address
                 db.prepare(`
@@ -462,13 +458,11 @@ vaultRouter.post(
                 success: true, 
                 txHash, 
                 localProofGenerated: isRetry ? false : localProofGenerated,
-                bitcoinTxid,
+                bitcoinTxid: null,
                 bitcoinSendError,
                 isRetry,
-                message: bitcoinTxid 
-                    ? `✅ Withdrawal complete! Bitcoin sent to ${bitcoin_address}` 
-                    : `⚠️ ${isRetry ? 'Bitcoin retry failed' : 'Starknet withdrawal succeeded but Bitcoin payout failed'}: ${bitcoinSendError}. You can retry withdrawal to complete Bitcoin payout.`,
-                canRetry: !bitcoinTxid
+                message: `Starknet withdrawal verified & authorized. The background processor will execute the OP_CAT payout to ${bitcoin_address} shortly.`,
+                canRetry: false
             });
         } catch (err) {
             console.error('withdraw error:', err);

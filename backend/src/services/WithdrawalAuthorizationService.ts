@@ -127,7 +127,7 @@ export class WithdrawalAuthorizationService {
      */
     static updateStatus(
         id: string, 
-        status: 'processing' | 'completed' | 'failed',
+        status: 'pending' | 'processing' | 'completed' | 'failed',
         bitcoinTxid?: string,
         errorMessage?: string
     ): void {

@@ -19,14 +19,22 @@ const fs = require('fs');
 const path = require('path');
 
 const CONTRACTS_DIR = path.resolve(__dirname, '../contracts/target/dev');
+require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 
 const provider = new RpcProvider({ nodeUrl: process.env.STARKNET_RPC_URL });
-const account = new Account(
+console.log('Account config:', {
+    rpc: !!process.env.STARKNET_RPC_URL,
+    acc: !!process.env.STARKNET_ACCOUNT_ADDRESS,
+    pk: !!process.env.SEPOLIA_PRIVATE_KEY
+});
+const account = new Account({
+    nodeUrl: process.env.STARKNET_RPC_URL,
     provider,
-    process.env.STARKNET_ACCOUNT_ADDRESS,
-    process.env.SEPOLIA_PRIVATE_KEY,
-    '1',  // Cairo 1 account
-);
+    address: process.env.STARKNET_ACCOUNT_ADDRESS,
+    pkOrSigner: process.env.SEPOLIA_PRIVATE_KEY,
+    signer: process.env.SEPOLIA_PRIVATE_KEY,
+    cairoVersion: '1',
+});
 
 function loadContract(name) {
     // Scarb outputs files like: private_btc_core_<ContractName>.contract_class.json
@@ -77,7 +85,8 @@ async function main() {
     console.log('🔧 SPV Bridge Contract Deployment');
     console.log('==================================');
     console.log(`Account:  ${process.env.STARKNET_ACCOUNT_ADDRESS}`);
-    console.log(`MockBTC:  ${process.env.MOCKBTC_CONTRACT_ADDRESS}`);
+    const mockBtcAddr = process.env.MOCKBTC_CONTRACT_ADDRESS || '0x0201c23ba72660516c987e8d11b8f6238b386f13099880cd1a8f5b065667343';
+    console.log(`MockBTC:  ${mockBtcAddr}`);
 
     // ── 1. Deploy HeaderStore ────────────────────────────────────────────────
     // constructor(relayer: ContractAddress)
@@ -102,7 +111,7 @@ async function main() {
     const pkhW4 = process.env.VAULT_PKH_W4 || '0x6ed1d48b';
 
     const vaultAddress = await declareDeploy('PrivateBTCVault', [
-        process.env.MOCKBTC_CONTRACT_ADDRESS,
+        mockBtcAddr,
         headerStoreAddress,
         pkhW0, pkhW1, pkhW2, pkhW3, pkhW4,
     ]);
