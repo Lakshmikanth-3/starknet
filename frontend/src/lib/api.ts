@@ -85,11 +85,12 @@ export const api = {
     },
 
     // Bridge
-    detectLock: async (address: string, amount: number): Promise<DetectLockResponse> => {
+    detectLock: async (address: string, amount: number, since?: number): Promise<DetectLockResponse> => {
         const response = await apiClient.get<any>('/api/bridge/detect-lock', {
             params: {
-                address: address,  // Backend route expects 'address', not 'vault_id'
-                amount: amount     // BTC float e.g. 0.002
+                address: address,
+                amount: amount,
+                ...(since ? { since: since.toString() } : {})
             }
         });
 
@@ -98,10 +99,10 @@ export const api = {
             locked: data.detected,
             transactionId: data.txid,
             confirmations: data.confirmations,
-            amountMatched: data.amount_btc, // Fixed property name
+            amountMatched: data.amount_btc,
             status: data.detected ? 'LOCKED' : 'PENDING',
-            signet_url: data.signet_url,    // Included missing property
-            mempool_url: data.mempool_url,  // Included missing property
+            signet_url: data.signet_url,
+            mempool_url: data.mempool_url,
         };
     },
 
@@ -150,3 +151,16 @@ export const verifyAudit = (): Promise<AuditVerifyResponse> =>
 
 export const getAudit = (): Promise<{ events: AuditEvent[] }> =>
     apiClient.get('/api/audit').then(r => r.data);
+
+export interface PoolStats {
+    anonymitySetSize: number;
+    totalActive: number;
+    spentCommitments: number;
+    minRequired: number;
+    withdrawalReady: boolean;
+    allowedDenominations: number[];
+    message: string;
+}
+
+export const getPoolStats = (): Promise<PoolStats> =>
+    apiClient.get('/api/privacy/pool-stats').then(r => r.data);

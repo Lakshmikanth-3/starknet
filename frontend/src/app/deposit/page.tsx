@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { api, submitDeposit } from "@/lib/api";
+import { api, submitDeposit, getPoolStats, PoolStats } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -50,6 +50,9 @@ export default function DepositPage() {
     // Dynamic Address
     const [depositAddress, setDepositAddress] = useState<string>("Loading...");
 
+    // Pool stats for anonymity set display
+    const [poolStats, setPoolStats] = useState<PoolStats | null>(null);
+
     // Auto-broadcast availability check
     const [autoBroadcastAvailable, setAutoBroadcastAvailable] = useState(true);
     const [senderBalanceInfo, setSenderBalanceInfo] = useState<string | null>(null);
@@ -82,6 +85,8 @@ export default function DepositPage() {
             }
         };
         checkBroadcastAvailability();
+        // Also fetch pool stats
+        getPoolStats().then(setPoolStats).catch(() => {});
     }, []);
 
     // Polling Effect and cleanup
@@ -93,12 +98,13 @@ export default function DepositPage() {
     }, []);
 
     // Manual Poll Trigger - with optional knownTxid from wallet
-    const startPolling = (knownTxid?: string) => {
+    const startPolling = (knownTxid?: string, sinceMs?: number) => {
         setHasSentBTC(true);
         setIsScanning(true);
         setScanError(null);
 
-        // If we already have the txid from wallet, use it immediately
+        // If we already have the txid from wallet, jump to step 3 immediately
+        // but continue polling so we detect the first confirmation for SPV.
         if (knownTxid && knownTxid !== 'pending') {
             console.log(`[Poll] Using known TXID from wallet: ${knownTxid}`);
             setBitcoinTx(knownTxid);
@@ -107,7 +113,8 @@ export default function DepositPage() {
             setStep(3);
             setIsScanning(false);
             toast({ title: "Bitcoin Sent!", description: `TXID: ${knownTxid.slice(0, 16)}...`, variant: "success" });
-            return;
+            // Fall through — keep polling below so we wait for 1 confirmation
+            // and auto-trigger handleSubmitStarknet via useEffect.
         }
 
         let attempts = 0;
@@ -119,8 +126,9 @@ export default function DepositPage() {
 
             try {
                 const result = await api.detectLock(
-                    depositAddress, // The state we fetched directly in Step 1
-                    parseFloat(amount)
+                    depositAddress,
+                    parseFloat(amount),
+                    sinceMs   // ← only consider UTXOs after this timestamp
                 );
 
                 console.log('[Poll] Response:', result);
@@ -212,6 +220,7 @@ export default function DepositPage() {
         }
 
         setIsWalletSending(true);
+        const sendStartTime = Date.now(); // record now before anything else
 
         try {
             const amountSats = Math.floor(parseFloat(amount) * 100_000_000);
@@ -223,18 +232,24 @@ export default function DepositPage() {
                 amountSats: amountSats
             });
 
-            console.log(`[Deposit] ✅ Transaction confirmed with TXID: ${txid}`);
-
-            // Always have a real TXID now
-            toast({
-                title: "Bitcoin Sent Successfully! 🎉",
-                description: `TXID: ${txid.slice(0, 16)}...`,
-                variant: "success"
-            });
-
-            // Use the TXID directly - no polling needed
-            console.log('[Deposit] 📝 Using transaction TXID:', txid);
-            startPolling(txid);
+            if (txid && txid !== 'pending') {
+                console.log(`[Deposit] ✅ Transaction confirmed with TXID: ${txid}`);
+                toast({
+                    title: "Bitcoin Sent Successfully! 🎉",
+                    description: `TXID: ${txid.slice(0, 16)}...`,
+                    variant: "success"
+                });
+                startPolling(txid, sendStartTime);
+            } else {
+                // 'pending' — popup closed after approval, BTC already on its way
+                console.log('[Deposit] 📡 Popup closed after approval — polling mempool for incoming tx...');
+                toast({
+                    title: "Scanning for your transaction...",
+                    description: "Xverse closed but your BTC may already be broadcast. Polling mempool now.",
+                    variant: "default"
+                });
+                startPolling(undefined, sendStartTime); // poll without seed txid — will discover from mempool
+            }
 
         } catch (err: any) {
             console.error('[Deposit] ❌ Transaction error:', err);
@@ -363,10 +378,11 @@ export default function DepositPage() {
                     voutIndex: proof.voutIndex,
                     merkleProofWords: proof.merkleProofWords,
                     bitcoin_txid: bitcoinTx,
-                    // ✅ CRITICAL FIX: Send secret and nullifier for database storage
                     secret: secret,
                     nullifier_hash: nullifierHash,
                     amount: parseFloat(amount),
+                    // Privacy: record the sender address so withdrawals to same address are blocked
+                    deposit_sender_address: walletAddress ?? undefined,
                 })
             });
 
@@ -438,17 +454,59 @@ export default function DepositPage() {
                         <CardDescription>We use Pedersen hashing to seal your deposit amount and secret before it touches the chain.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
+                        {/* Pool depth / anonymity set indicator */}
+                        {poolStats && (
+                            <div className={cn(
+                                "rounded-xl border p-3 text-xs",
+                                poolStats.withdrawalReady
+                                    ? "border-green-500/20 bg-green-500/5 text-green-300"
+                                    : "border-yellow-500/30 bg-yellow-500/8 text-yellow-300"
+                            )}>
+                                <div className="flex items-center justify-between mb-1">
+                                    <span className="font-bold uppercase tracking-wider text-[10px]">🔒 Privacy Pool Depth</span>
+                                    <span className={cn(
+                                        "font-mono font-bold",
+                                        poolStats.withdrawalReady ? "text-green-400" : "text-yellow-400"
+                                    )}>
+                                        {poolStats.anonymitySetSize} / {poolStats.minRequired} min
+                                    </span>
+                                </div>
+                                <div className="w-full bg-zinc-800 rounded-full h-1.5 mb-1">
+                                    <div
+                                        className={cn("h-1.5 rounded-full transition-all", poolStats.withdrawalReady ? "bg-green-500" : "bg-yellow-500")}
+                                        style={{ width: `${Math.min(100, (poolStats.anonymitySetSize / Math.max(poolStats.minRequired, 1)) * 100)}%` }}
+                                    />
+                                </div>
+                                <p className="text-[10px] opacity-70">{poolStats.message}</p>
+                            </div>
+                        )}
+
                         <div className="space-y-2">
                             <label className="text-sm font-medium text-zinc-300">Bitcoin Amount</label>
-                            <div className="relative">
-                                <Input
-                                    type="number"
-                                    className="px-4 bg-zinc-900/80 text-2xl font-mono text-white border-zinc-700 h-14 focus-visible:ring-btc-500 focus-visible:border-btc-500 transition-all rounded-xl"
-                                    placeholder="0.00"
-                                    value={amount}
-                                    onChange={(e) => setAmount(e.target.value)}
-                                />
+                            <p className="text-[11px] text-zinc-500">Fixed denominations prevent amount-based correlation attacks</p>
+                            {/* Fixed denomination buttons */}
+                            <div className="grid grid-cols-4 gap-2">
+                                {[0.0001, 0.001, 0.01, 0.1].map((d) => (
+                                    <button
+                                        key={d}
+                                        type="button"
+                                        onClick={() => setAmount(d.toString())}
+                                        className={cn(
+                                            "h-12 rounded-xl border-2 font-mono font-bold text-sm transition-all",
+                                            amount === d.toString()
+                                                ? "border-btc-500 bg-btc-500/20 text-btc-300 shadow-[0_0_12px_rgba(246,147,26,0.3)]"
+                                                : "border-zinc-700 bg-zinc-900/50 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
+                                        )}
+                                    >
+                                        {d}
+                                    </button>
+                                ))}
                             </div>
+                            {amount && (
+                                <p className="text-xs text-btc-400 text-center font-mono">
+                                    Selected: <strong>{amount} BTC</strong> ({(parseFloat(amount) * 100000000).toLocaleString()} sats)
+                                </p>
+                            )}
                         </div>
                         <div className="space-y-2 pt-2">
                             <label className="text-sm font-medium text-zinc-300">Withdrawal Secret (32-byte Hex)</label>

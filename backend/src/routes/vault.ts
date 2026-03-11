@@ -12,6 +12,8 @@ import { validateTxHash } from '../middleware/validateTxHash';
 import { isValidStarknetAddress } from '../middleware/validators';
 import { isValidLockDuration, getApy } from '../config/apy';
 import { WithdrawalAuthorizationService } from '../services/WithdrawalAuthorizationService';
+import { BitcoinCovenantService } from '../services/BitcoinCovenantService';
+import { BitcoinBroadcastService } from '../services/BitcoinBroadcastService';
 import {
     TransactionNotFoundError,
     TransactionRevertedError,
@@ -417,10 +419,39 @@ vaultRouter.post(
                 }
                 authorizationId = auth.id;
 
-                // ⚠️ CRITICAL FIX: We do NOT attempt to broadcast synchronously here anymore.
-                // We let the WithdrawalProcessor (which is checking the queue) pick this up 
-                // in the background. It will properly route it to OP_CAT if enabled.
-                console.log(`[WITHDRAW] ⏳ Queued auth ${auth.id} for the background WithdrawalProcessor...`);
+                // ✅ IMMEDIATE ATTEMPT: Try to send Bitcoin right now (10s timeout).
+                // If this works, the user gets their BTC instantly without waiting for
+                // the background processor's next poll cycle.
+                // If it fails, the WithdrawalProcessor will retry automatically.
+                console.log(`[WITHDRAW] ⚡ Attempting immediate Bitcoin covenant payout...`);
+                const immediatePayoutPromise = (async () => {
+                    const useCovenants = process.env.USE_OPCAT_COVENANTS === 'true';
+                    if (useCovenants) {
+                        return await BitcoinCovenantService.executeCovenantWithdrawal(auth!.id);
+                    } else {
+                        return await BitcoinBroadcastService.sendBitcoinWithAuthorization(auth!.id);
+                    }
+                })();
+
+                // Race with a 20s timeout so the HTTP response doesn't hang
+                const IMMEDIATE_TIMEOUT_MS = 20_000;
+                const immediateTimeoutPromise = new Promise<null>((resolve) =>
+                    setTimeout(() => resolve(null), IMMEDIATE_TIMEOUT_MS)
+                );
+
+                const immediateResult = await Promise.race([immediatePayoutPromise, immediateTimeoutPromise])
+                    .catch((err) => {
+                        console.error(`[WITHDRAW] Immediate payout attempt failed: ${err.message}`);
+                        return null;
+                    });
+
+                if (immediateResult) {
+                    bitcoinTxid = immediateResult;
+                    WithdrawalAuthorizationService.updateStatus(auth.id, 'completed', bitcoinTxid ?? undefined);
+                    console.log(`[WITHDRAW] ✅ Immediate Bitcoin payout succeeded: ${bitcoinTxid}`);
+                } else {
+                    console.log(`[WITHDRAW] ⏳ Immediate payout not completed — background processor will retry auth ${auth.id}`);
+                }
 
             } catch (authErr: any) {
                 console.error('[WITHDRAW] ❌ Authorization creation failed:', authErr.message);
@@ -458,10 +489,12 @@ vaultRouter.post(
                 success: true, 
                 txHash, 
                 localProofGenerated: isRetry ? false : localProofGenerated,
-                bitcoinTxid: null,
-                bitcoinSendError,
+                bitcoinTxid: bitcoinTxid ?? null,
+                bitcoinSendError: bitcoinTxid ? null : bitcoinSendError,
                 isRetry,
-                message: `Starknet withdrawal verified & authorized. The background processor will execute the OP_CAT payout to ${bitcoin_address} shortly.`,
+                message: bitcoinTxid
+                    ? `✅ Withdrawal complete. Bitcoin sent: ${bitcoinTxid}`
+                    : `Starknet burn confirmed. Bitcoin payout queued — will arrive within ~30 seconds.`,
                 canRetry: false
             });
         } catch (err) {

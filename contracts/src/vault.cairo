@@ -1,12 +1,15 @@
-/// PrivateBTCVault — SPV-gated minting.
+/// PrivateBTCVault — SPV-gated minting with P2TR covenant deposit address.
 ///
-/// deposit() now requires a real Bitcoin SPV proof:
-///   1. Looks up the block's Merkle root from the HeaderStore contract
-///   2. Verifies the Bitcoin tx is included in that block (Merkle proof)
-///   3. Parses the tx output to confirm amount & destination matches vault address
+/// deposit() requires a real Bitcoin SPV proof:
+///   1. Looks up block's Merkle root from HeaderStore
+///   2. Verifies the Bitcoin tx is included (Merkle proof)
+///   3. Parses the tx output to confirm amount & destination matches
+///      the covenant P2TR address (OP_1 OP_PUSH32 <tweaked_pubkey>)
 ///   4. Only then mints mBTC and records the ZK commitment
 ///
-/// withdraw() is unchanged: nullifier + proof + recipient + amount.
+/// Using P2TR means deposits are locked in the OP_CAT covenant script —
+/// the operator's hot-wallet key CANNOT spend deposited funds directly.
+/// Withdrawals require the covenant tapscript to be satisfied on Bitcoin.
 
 #[starknet::interface]
 trait IPrivateBTCVault<TContractState> {
@@ -65,13 +68,17 @@ mod PrivateBTCVault {
         header_store: ContractAddress,
         nullifiers: Map<felt252, bool>,
         commitments: Map<felt252, bool>,
-        // Vault Bitcoin P2WPKH pubkey hash (20 bytes → 5 × u32 big-endian)
-        // From: tb1qgua8e2zpmq79zvmnequka5w53wse3ffuws00gs
-        vault_pkh_w0: u32,
-        vault_pkh_w1: u32,
-        vault_pkh_w2: u32,
-        vault_pkh_w3: u32,
-        vault_pkh_w4: u32,
+        // Covenant Bitcoin P2TR tweaked x-only pubkey (32 bytes → 8 × u32 big-endian)
+        // From: tb1p72dtm26yw6ez0dzddqxt50960r7nyrw2dh0622u2zkp33qskqyaqrj90m7
+        // Derived by bech32m-decoding the covenant address witness program.
+        vault_tapkey_w0: u32,
+        vault_tapkey_w1: u32,
+        vault_tapkey_w2: u32,
+        vault_tapkey_w3: u32,
+        vault_tapkey_w4: u32,
+        vault_tapkey_w5: u32,
+        vault_tapkey_w6: u32,
+        vault_tapkey_w7: u32,
         // Prevent double-mint: txid stored as (hi_u128, lo_u128)
         spent_txids: Map<(u128, u128), bool>,
     }
@@ -108,19 +115,26 @@ mod PrivateBTCVault {
         ref self: ContractState,
         btc_token: ContractAddress,
         header_store: ContractAddress,
-        vault_pkh_w0: u32,
-        vault_pkh_w1: u32,
-        vault_pkh_w2: u32,
-        vault_pkh_w3: u32,
-        vault_pkh_w4: u32,
+        // 32-byte covenant tweaked x-only pubkey split into 8 × u32 big-endian words
+        vault_tapkey_w0: u32,
+        vault_tapkey_w1: u32,
+        vault_tapkey_w2: u32,
+        vault_tapkey_w3: u32,
+        vault_tapkey_w4: u32,
+        vault_tapkey_w5: u32,
+        vault_tapkey_w6: u32,
+        vault_tapkey_w7: u32,
     ) {
         self.btc_token.write(btc_token);
         self.header_store.write(header_store);
-        self.vault_pkh_w0.write(vault_pkh_w0);
-        self.vault_pkh_w1.write(vault_pkh_w1);
-        self.vault_pkh_w2.write(vault_pkh_w2);
-        self.vault_pkh_w3.write(vault_pkh_w3);
-        self.vault_pkh_w4.write(vault_pkh_w4);
+        self.vault_tapkey_w0.write(vault_tapkey_w0);
+        self.vault_tapkey_w1.write(vault_tapkey_w1);
+        self.vault_tapkey_w2.write(vault_tapkey_w2);
+        self.vault_tapkey_w3.write(vault_tapkey_w3);
+        self.vault_tapkey_w4.write(vault_tapkey_w4);
+        self.vault_tapkey_w5.write(vault_tapkey_w5);
+        self.vault_tapkey_w6.write(vault_tapkey_w6);
+        self.vault_tapkey_w7.write(vault_tapkey_w7);
     }
 
     // ── External ABI ─────────────────────────────────────────────────────────
@@ -163,11 +177,13 @@ mod PrivateBTCVault {
             let (amount_sats, script) = bitcoin_spv::parse_output(raw_tx, vout_index);
             assert(amount_sats > 0, 'Zero amount in tx output');
 
-            // ── 7. Verify output pays our vault Bitcoin address ───────────────
-            let pkh = InternalImpl::vault_pkh(@self);
+            // ── 7. Verify output pays the COVENANT P2TR address ───────────────
+            // scriptPubKey must be: OP_1 (0x51) + PUSH_32 (0x20) + 32-byte tweaked pubkey
+            // This ensures BTC is locked in the OP_CAT covenant, NOT the hot wallet.
+            let tapkey = InternalImpl::vault_tapkey(@self);
             assert(
-                bitcoin_spv::script_matches_p2wpkh(script, pkh.span()),
-                'Output not paying vault address'
+                bitcoin_spv::script_matches_p2tr(script, tapkey.span()),
+                'Output not paying covenant P2TR'
             );
 
             // ── 8. Mark commitment + txid as spent ───────────────────────────
@@ -225,14 +241,17 @@ mod PrivateBTCVault {
 
     #[generate_trait]
     impl InternalImpl of InternalTrait {
-        /// Build the 20-byte vault pubkey hash from storage as an Array<u8>.
-        fn vault_pkh(self: @ContractState) -> Array<u8> {
+        /// Build the 32-byte covenant tweaked x-only pubkey from storage as Array<u8>.
+        fn vault_tapkey(self: @ContractState) -> Array<u8> {
             let mut arr: Array<u8> = ArrayTrait::new();
-            Self::push_u32_be(ref arr, self.vault_pkh_w0.read());
-            Self::push_u32_be(ref arr, self.vault_pkh_w1.read());
-            Self::push_u32_be(ref arr, self.vault_pkh_w2.read());
-            Self::push_u32_be(ref arr, self.vault_pkh_w3.read());
-            Self::push_u32_be(ref arr, self.vault_pkh_w4.read());
+            Self::push_u32_be(ref arr, self.vault_tapkey_w0.read());
+            Self::push_u32_be(ref arr, self.vault_tapkey_w1.read());
+            Self::push_u32_be(ref arr, self.vault_tapkey_w2.read());
+            Self::push_u32_be(ref arr, self.vault_tapkey_w3.read());
+            Self::push_u32_be(ref arr, self.vault_tapkey_w4.read());
+            Self::push_u32_be(ref arr, self.vault_tapkey_w5.read());
+            Self::push_u32_be(ref arr, self.vault_tapkey_w6.read());
+            Self::push_u32_be(ref arr, self.vault_tapkey_w7.read());
             arr
         }
 

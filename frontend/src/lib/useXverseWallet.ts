@@ -210,11 +210,14 @@ export const useXverseWallet = () => {
             }
           },
           onCancel: () => {
-            console.log('[Xverse] 🚪 sendBtcTransaction cancelled by user');
+            console.log('[Xverse] 🚪 sendBtcTransaction popup closed — treating as pending (BTC may already be sent)');
             if (!isFinished) {
               isFinished = true;
               if (timeoutId) clearTimeout(timeoutId);
-              reject(new Error('Transaction cancelled by user'));
+              // Resolve with 'pending' so the deposit page starts polling.
+              // Xverse fires onCancel when the user closes the popup, even after
+              // approving the transaction. The BTC is likely already broadcast.
+              resolve('pending');
             }
           },
         });

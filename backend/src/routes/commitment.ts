@@ -17,6 +17,7 @@ import { config } from '../config/env';
 import { strictLimiter } from '../middleware/rateLimiters';
 import { validateBody } from '../middleware/validateBody';
 import { methodNotAllowed } from '../middleware/methodNotAllowed';
+import { isAllowedDenomination, ALLOWED_DENOMINATIONS_BTC } from '../utils/privacyConstants';
 
 export const commitmentRouter = Router();
 
@@ -34,6 +35,16 @@ commitmentRouter.post('/deposit', strictLimiter, async (req: Request, res: Respo
             randomness_hint: z.string().optional(),
         });
         const { vault_id, commitment, amount, owner_address, bitcoin_txid, secret, salt, randomness_hint } = schema.parse(req.body);
+
+        // ── Privacy: enforce fixed denominations ─────────────────────────────
+        if (!isAllowedDenomination(amount)) {
+            res.status(400).json({
+                error: `Amount ${amount} BTC is not a valid denomination. Allowed: ${ALLOWED_DENOMINATIONS_BTC.join(', ')} BTC`,
+                code: 'INVALID_DENOMINATION',
+                allowedDenominations: ALLOWED_DENOMINATIONS_BTC,
+            });
+            return;
+        }
 
         // Use provided owner_address or fallback to relayer account address
         const actualOwnerAddress = owner_address || config.STARKNET_ACCOUNT_ADDRESS;
@@ -195,6 +206,16 @@ commitmentRouter.post('/create', strictLimiter, async (req: Request, res: Respon
         if (isNaN(amountFloat) || amountFloat <= 0) {
             res.status(400).json({
                 error: 'Invalid amount: must be a positive number'
+            });
+            return;
+        }
+
+        // ── Privacy: enforce fixed denominations ─────────────────────────────
+        if (!isAllowedDenomination(amountFloat)) {
+            res.status(400).json({
+                error: `Amount ${amountFloat} BTC is not a valid denomination. Allowed: ${ALLOWED_DENOMINATIONS_BTC.join(', ')} BTC`,
+                code: 'INVALID_DENOMINATION',
+                allowedDenominations: ALLOWED_DENOMINATIONS_BTC,
             });
             return;
         }

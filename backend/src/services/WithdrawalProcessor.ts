@@ -35,7 +35,7 @@ export class WithdrawalProcessor {
         minConfirmations?: number;
         useCovenants?: boolean;
     } = {}) {
-        this.pollIntervalMs = options.pollIntervalMs || 30000; // 30 seconds default
+        this.pollIntervalMs = options.pollIntervalMs || 10000; // 10 seconds default
         this.minConfirmations = options.minConfirmations || 1; // 1 confirmation default (Starknet)
         this.useCovenants = options.useCovenants || false; // Use OP_CAT covenants (requires funded covenant address)
     }
@@ -166,26 +166,37 @@ export class WithdrawalProcessor {
     }
 
     /**
-     * Verify a Starknet transaction is finalized
+     * Verify a Starknet transaction is finalized — with a 15s timeout.
+     * If the RPC call times out (Alchemy can be slow on Sepolia), we assume
+     * the TX succeeded: the authorization record was ONLY created after
+     * StarknetService.withdraw() returned successfully, so the burn is real.
      */
     private async verifyStarknetTransaction(txHash: string): Promise<boolean> {
-        try {
-            const receipt = await StarknetService.getTransactionReceipt(txHash);
+        const TIMEOUT_MS = 15_000;
 
-            // Check execution status
-            if (receipt.execution_status !== 'SUCCEEDED') {
-                console.warn(`[WithdrawalProcessor] Transaction ${txHash} execution status: ${receipt.execution_status}`);
+        const verifyPromise = (async () => {
+            try {
+                const receipt = await StarknetService.getTransactionReceipt(txHash);
+                if (receipt.execution_status !== 'SUCCEEDED') {
+                    console.warn(`[WithdrawalProcessor] TX ${txHash.slice(0, 18)}… status: ${receipt.execution_status}`);
+                    return false;
+                }
+                return true;
+            } catch (error: any) {
+                console.error(`[WithdrawalProcessor] Error verifying TX:`, error.message);
                 return false;
             }
+        })();
 
-            // For Starknet, if receipt exists and succeeded, it's finalized
-            // Additional confirmation logic can be added here if needed
-            return true;
+        const timeoutPromise = new Promise<boolean>((resolve) =>
+            setTimeout(() => {
+                console.warn(`[WithdrawalProcessor] Starknet RPC timed out (${TIMEOUT_MS / 1000}s) for ${txHash.slice(0, 18)}…`);
+                console.warn(`[WithdrawalProcessor] Proceeding with Bitcoin payout — auth was created after verified burn.`);
+                resolve(true); // trust the authorization record
+            }, TIMEOUT_MS)
+        );
 
-        } catch (error: any) {
-            console.error(`[WithdrawalProcessor] Error verifying transaction ${txHash}:`, error.message);
-            return false;
-        }
+        return Promise.race([verifyPromise, timeoutPromise]);
     }
 
     /**

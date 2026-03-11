@@ -217,6 +217,16 @@ function initSchema(db: Database.Database): void {
       console.error('Migration error (bitcoin_withdrawal_address):', e.message);
     }
   }
+
+  // Privacy: track Bitcoin address that initiated the deposit so we can
+  // prevent the user from withdrawing to the same address.
+  try {
+    db.exec(`ALTER TABLE vaults ADD COLUMN deposit_sender_address TEXT DEFAULT NULL`);
+  } catch (e: any) {
+    if (!e.message.includes('duplicate column name')) {
+      console.error('Migration error (deposit_sender_address):', e.message);
+    }
+  }
 }
 
 // Initialize on import

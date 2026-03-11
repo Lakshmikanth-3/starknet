@@ -39,6 +39,7 @@ import { htlcRouter } from './routes/htlc';
 import { commitmentRouter } from './routes/commitment';
 import sharpRouter from './routes/sharp';
 import bridgeRouter from './routes/bridge';
+import { privacyRouter } from './routes/privacy';
 import { BitcoinHeaderRelayService } from './services/BitcoinHeaderRelayService';
 import { WithdrawalProcessor } from './services/WithdrawalProcessor';
 
@@ -124,6 +125,7 @@ app.use('/api/proof', proofRouter);
 app.use('/api/withdraw', withdrawRouter);
 app.use('/api/transactions', transactionsRouter);
 app.use('/api/audit', auditRouter);
+app.use('/api/privacy', privacyRouter);
 
 // Debug routes — development only
 if (config.NODE_ENV === 'development') {

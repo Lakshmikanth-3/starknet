@@ -116,7 +116,7 @@ export class StarknetService {
     private static nextAttemptAt = 0;
     private static readonly THRESHOLD = 5;
     private static readonly RESET_TIMEOUT_MS = 60000; // 1 minute
-    private static readonly RPC_TIMEOUT_MS = 30000;    // 30 seconds (increased from 15s for better reliability)
+    private static readonly RPC_TIMEOUT_MS = 8000;    // 8 seconds — Alchemy Sepolia is slow; fail fast and retry
 
     /** RpcProvider singleton — uses STARKNET_RPC_URL from env */
     static getProvider(): RpcProvider {
@@ -341,7 +341,7 @@ export class StarknetService {
 
     /** Validate tx hash format. */
     static validateTxHashFormat(txHash: string): boolean {
-        return /^0x[0-9a-fA-F]{63,64}$/.test(txHash);
+        return /^0x[0-9a-fA-F]{60,64}$/.test(txHash);
     }
 
     /** Execute the actual withdraw on-chain via the relayer account */
@@ -397,9 +397,13 @@ export class StarknetService {
     }
 
     /** Fetch real transaction receipt from Starknet — uses resilience wrapper. */
-    static async getTransactionReceipt(txHash: string): Promise<TransactionReceipt> {
+    static async getTransactionReceipt(txHashRaw: string): Promise<TransactionReceipt> {
+        // Starknet sometimes omits leading zeros (e.g. 62-char hash). Pad to 64.
+        const hex = txHashRaw.startsWith('0x') ? txHashRaw.slice(2) : txHashRaw;
+        const txHash = '0x' + hex.padStart(64, '0');
+
         if (!this.validateTxHashFormat(txHash)) {
-            throw new Error(`Invalid tx hash format: ${txHash}`);
+            throw new Error(`Invalid tx hash format: ${txHashRaw}`);
         }
         return this.withResilience(async (provider) => {
             const receipt = await provider.getTransactionReceipt(txHash);

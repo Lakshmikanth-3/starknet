@@ -11,30 +11,95 @@ export const getDepositAddress = (): string => {
     return addr;
 };
 
-const MEMPOOL_SIGNET_BASE = process.env.MEMPOOL_API_URL || 'https://mempool.space/signet/api';
+const MEMPOOL_SIGNET_BASE = process.env.MEMPOOL_API_URL || 'https://explorer.bc-2.jp/api';
+
+function sleep(ms: number) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Fetch already-known bitcoin txids from the vaults DB so we can skip them.
+ * Imported lazily to avoid circular dependency.
+ */
+async function getKnownTxids(): Promise<Set<string>> {
+    try {
+        const dbModule = await import('../db/schema');
+        const db = dbModule.default;
+        const rows = db.prepare(`SELECT bitcoin_txid FROM vaults WHERE bitcoin_txid IS NOT NULL`).all() as { bitcoin_txid: string }[];
+        return new Set(rows.map(r => r.bitcoin_txid));
+    } catch {
+        return new Set();
+    }
+}
 
 export async function detectBTCLock(
     address: string,
-    expectedAmountBTC: number
+    expectedAmountBTC: number,
+    sinceMs?: number   // only consider UTXOs/txns AFTER this unix-ms timestamp
 ): Promise<{ detected: boolean; txid?: string; confirmations?: number }> {
     const expectedSats = Math.round(expectedAmountBTC * 1e8);
+    const sinceSeconds = sinceMs ? Math.floor(sinceMs / 1000) : 0;
 
     console.log(`[BitcoinSignet] Checking address: ${address}`);
     console.log(`[BitcoinSignet] Expected amount: ${expectedAmountBTC} BTC = ${expectedSats} sats`);
+    if (sinceSeconds) console.log(`[BitcoinSignet] Only showing UTXOs since: ${new Date(sinceMs!).toISOString()}`);
 
-    const url = `${MEMPOOL_SIGNET_BASE}/address/${address}/utxo`;
+    // 0. Load txids already used so we don't return stale deposits
+    const knownTxids = await getKnownTxids();
+    console.log(`[BitcoinSignet] Ignoring ${knownTxids.size} already-known txid(s)`);
+
+    // ── STEP 1: Check mempool (unconfirmed) transactions FIRST ───────────────
+    // This guarantees we return a brand-new deposit the moment it hits the
+    // mempool, even before it is mined and shows up in the UTXO set.
+    try {
+        const mempoolUrl = `${MEMPOOL_SIGNET_BASE}/address/${address}/txs/mempool`;
+        console.log(`[BitcoinSignet] Checking mempool: ${mempoolUrl}`);
+        const mempoolRes = await fetch(mempoolUrl, { signal: AbortSignal.timeout(8000) });
+
+        if (mempoolRes.ok) {
+            const mempoolTxs = await mempoolRes.json() as any[];
+            console.log(`[BitcoinSignet] Mempool: ${mempoolTxs.length} unconfirmed txn(s)`);
+
+            for (const tx of mempoolTxs) {
+                if (knownTxids.has(tx.txid)) continue; // skip stale
+                // Optionally check first_seen if available (bc-2.jp may expose it)
+                const txSeen = tx.status?.block_time || 0;
+                if (sinceSeconds && txSeen && txSeen < sinceSeconds) continue;
+                // Look for an output paying to our address with the right amount
+                const matchingVout = (tx.vout || []).find((vout: any) =>
+                    vout.scriptpubkey_address === address &&
+                    (vout.value === expectedSats ||
+                        Math.abs(vout.value - expectedSats) <= Math.max(1000, Math.round(expectedSats * 0.01)))
+                );
+                if (matchingVout) {
+                    console.log(`[BitcoinSignet] ⚡ MEMPOOL HIT: txid=${tx.txid}, value=${matchingVout.value} sats`);
+                    return { detected: true, txid: tx.txid, confirmations: 0 };
+                }
+            }
+
+            if (mempoolTxs.length > 0) {
+                console.log(`[BitcoinSignet] Mempool txns found but none matched amount ${expectedSats} sats`);
+            }
+        } else {
+            await mempoolRes.text().catch(() => {});
+            console.warn(`[BitcoinSignet] Mempool endpoint returned HTTP ${mempoolRes.status}`);
+        }
+    } catch (err: any) {
+        console.warn(`[BitcoinSignet] Mempool check failed: ${err.message} — falling back to UTXO endpoint`);
+    }
+
+    // ── STEP 2: Fall back to confirmed UTXO set ──────────────────────────────
+    // Sort by newest block first. Skip any txids already tracked in DB.
+    const utxoUrl = `${MEMPOOL_SIGNET_BASE}/address/${address}/utxo`;
 
     for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-            console.log(`[BitcoinSignet] Fetching UTXOs attempt ${attempt}: ${url}`);
-
-            const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
+            console.log(`[BitcoinSignet] Fetching UTXOs attempt ${attempt}: ${utxoUrl}`);
+            const response = await fetch(utxoUrl, { signal: AbortSignal.timeout(8000) });
 
             if (!response.ok) {
                 console.warn(`[BitcoinSignet] HTTP ${response.status} from mempool`);
-                // Important: must consume the response body explicitly if we don't use it, 
-                // otherwise undici/Node's fetch connection pool gets exhausted and hangs forever!
-                await response.text().catch(() => { });
+                await response.text().catch(() => {});
                 await sleep(2000 * attempt);
                 continue;
             }
@@ -42,109 +107,82 @@ export async function detectBTCLock(
             const utxos = await response.json() as any[];
             console.log(`[BitcoinSignet] Found ${utxos.length} UTXOs`);
 
-            // CRITICAL FIX: Sort FIRST to prioritize unconfirmed transactions
-            // This ensures unconfirmed (newest) are always at index [0]
-            console.log(`[BitcoinSignet] 🔄 Sorting ${utxos.length} UTXOs (unconfirmed first, then by timestamp)...`);
-            const sorted = [...utxos].sort((a, b) => {
+            // Filter out known/already-used txids AND txns older than sinceSeconds
+            const freshUtxos = utxos.filter(u => {
+                if (knownTxids.has(u.txid)) return false;
+                // Unconfirmed: always include
+                if (!u.status?.confirmed) return true;
+                // Confirmed: only include if block_time >= sinceSeconds
+                if (sinceSeconds && u.status.block_time < sinceSeconds) return false;
+                return true;
+            });
+            console.log(`[BitcoinSignet] ${freshUtxos.length} fresh UTXO(s) after excluding known txids`);
+
+            if (freshUtxos.length === 0) {
+                console.log(`[BitcoinSignet] No fresh UTXOs – new deposit not yet indexed`);
+                return { detected: false };
+            }
+
+            // Sort: unconfirmed first, then by newest block time
+            const sorted = [...freshUtxos].sort((a, b) => {
                 const aConfirmed = a.status?.confirmed || false;
                 const bConfirmed = b.status?.confirmed || false;
-
-                // CRITICAL: Unconfirmed transactions come FIRST (newest deposits)
-                if (!aConfirmed && bConfirmed) return -1; // a first (unconfirmed = NEW)
-                if (aConfirmed && !bConfirmed) return 1;  // b first (unconfirmed = NEW)
-
-                // If both unconfirmed, keep original order
+                if (!aConfirmed && bConfirmed) return -1;
+                if (aConfirmed && !bConfirmed) return 1;
                 if (!aConfirmed && !bConfirmed) return 0;
-
-                // ✅ FIX: If both confirmed, sort by TIMESTAMP first (most recent = newer)
-                // This handles multiple transactions in the same block correctly
+                // Both confirmed → newest block wins
                 const aTime = a.status?.block_time || 0;
                 const bTime = b.status?.block_time || 0;
-                
-                if (aTime !== bTime) {
-                    return bTime - aTime; // Higher timestamp = newer transaction
-                }
-
-                // Fallback: If timestamps are same/missing, sort by block height
-                const aHeight = a.status?.block_height || 0;
-                const bHeight = b.status?.block_height || 0;
-                return bHeight - aHeight;
+                if (aTime !== bTime) return bTime - aTime;
+                return (b.status?.block_height || 0) - (a.status?.block_height || 0);
             });
 
-            // Log SORTED UTXOs for debugging with timestamps
             sorted.forEach((u, i) => {
-                const confirmStatus = u.status?.confirmed ? `confirmed (height: ${u.status.block_height})` : 'UNCONFIRMED ⚡';
-                const timestamp = u.status?.block_time ? new Date(u.status.block_time * 1000).toISOString() : 'pending';
-                console.log(`[BitcoinSignet] [${i}] ${confirmStatus} | Time: ${timestamp} | ${u.txid.substring(0, 16)}... | ${u.value} sats`);
+                const s = u.status?.confirmed ? `confirmed (height: ${u.status.block_height})` : 'UNCONFIRMED ⚡';
+                const ts = u.status?.block_time ? new Date(u.status.block_time * 1000).toISOString() : 'pending';
+                console.log(`[BitcoinSignet] [${i}] ${s} | ${ts} | ${u.txid.substring(0, 16)}... | ${u.value} sats`);
             });
 
-            // Flexible matching strategy on SORTED array:
-            // 1. Try exact match first (will prefer unconfirmed if available)
-            let match = sorted.find((utxo) => utxo.value === expectedSats);
-
-            // 2. If no exact match, try approximate match (±1% tolerance)
+            // Exact match first, then ±1% tolerance, then newest
+            let match = sorted.find(u => u.value === expectedSats);
             if (!match) {
-                const tolerance = Math.max(1000, Math.round(expectedSats * 0.01));
-                match = sorted.find((utxo) =>
-                    Math.abs(utxo.value - expectedSats) <= tolerance
-                );
-                if (match) {
-                    console.log(`[BitcoinSignet] ⚠️ APPROXIMATE MATCH: expected ${expectedSats}, found ${match.value} (within ${tolerance} sats)`);
-                }
+                const tol = Math.max(1000, Math.round(expectedSats * 0.01));
+                match = sorted.find(u => Math.abs(u.value - expectedSats) <= tol);
+                if (match) console.log(`[BitcoinSignet] ⚠️ Approximate match: expected ${expectedSats}, found ${match.value}`);
             }
-
-            // 3. If still no match, just take the first (newest/unconfirmed)
             if (!match && sorted.length > 0) {
                 match = sorted[0];
-                console.log(`[BitcoinSignet] ℹ️ No amount match found, using newest UTXO`);
+                console.log(`[BitcoinSignet] ℹ️ No amount match, using newest fresh UTXO`);
             }
 
             if (match) {
-                const confirmStatus = match.status?.confirmed ? `confirmed (height: ${match.status.block_height})` : 'UNCONFIRMED ⚡';
-                const timestamp = match.status?.block_time ? new Date(match.status.block_time * 1000).toISOString() : 'pending';
-                console.log(`[BitcoinSignet] ✅ SELECTED: ${confirmStatus}`);
+                const s = match.status?.confirmed ? `confirmed (height: ${match.status.block_height})` : 'UNCONFIRMED ⚡';
+                console.log(`[BitcoinSignet] ✅ SELECTED: ${s}`);
                 console.log(`[BitcoinSignet] ✅ TXID: ${match.txid}`);
-                console.log(`[BitcoinSignet] ✅ Timestamp: ${timestamp}`);
                 console.log(`[BitcoinSignet] ✅ Amount: ${match.value} sats (expected: ${expectedSats})`);
-            }
 
-            if (match) {
-                console.log(`[BitcoinSignet] ✅ DETECTION SUCCESS: txid=${match.txid}`);
-                
-                // ✅ FIX: Calculate REAL confirmation count from blockchain
                 let confirmations = 0;
                 if (match.status?.confirmed && match.status.block_height) {
                     try {
-                        // Fetch current blockchain tip height
                         const tipRes = await fetch(`${MEMPOOL_SIGNET_BASE}/blocks/tip/height`, {
                             signal: AbortSignal.timeout(5000)
                         });
-                        
                         if (tipRes.ok) {
                             const tipHeight = parseInt(await tipRes.text());
-                            // Confirmations = (current height - tx block height) + 1
                             confirmations = Math.max(0, (tipHeight - match.status.block_height) + 1);
                             console.log(`[BitcoinSignet] 📊 Confirmations: ${confirmations} (tip: ${tipHeight}, tx block: ${match.status.block_height})`);
                         } else {
-                            // Fallback: at least 1 confirmation if confirmed
                             confirmations = 1;
-                            console.log(`[BitcoinSignet] ⚠️ Could not fetch tip height, using fallback confirmations=1`);
                         }
-                    } catch (err) {
-                        // Fallback: at least 1 confirmation if confirmed
+                    } catch {
                         confirmations = 1;
-                        console.log(`[BitcoinSignet] ⚠️ Error fetching tip: ${err}, using fallback confirmations=1`);
                     }
                 }
-                
-                return {
-                    detected: true,
-                    txid: match.txid,
-                    confirmations
-                };
+
+                return { detected: true, txid: match.txid, confirmations };
             }
 
-            console.log(`[BitcoinSignet] No UTXOs found at address ${address}`);
+            console.log(`[BitcoinSignet] No matching UTXOs at address ${address}`);
             return { detected: false };
 
         } catch (err: any) {
@@ -156,50 +194,31 @@ export async function detectBTCLock(
     return { detected: false };
 }
 
-function sleep(ms: number) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 export async function verifyTransaction(txid: string): Promise<any> {
-    const MEMPOOL_API = process.env.MEMPOOL_API_URL || 'https://mempool.space/signet/api';
-
+    const MEMPOOL_API = process.env.MEMPOOL_API_URL || 'https://explorer.bc-2.jp/api';
     const res = await fetch(`${MEMPOOL_API}/tx/${txid}/status`, { signal: AbortSignal.timeout(8000) });
-
     if (!res.ok) {
-        await res.text().catch(() => { });
+        await res.text().catch(() => {});
         throw new Error("TX not found");
     }
     return await res.json();
 }
 
 export async function getBridgeStatus(): Promise<any> {
-    const MEMPOOL_API = process.env.MEMPOOL_API_URL || 'https://mempool.space/signet/api';
+    const MEMPOOL_API = process.env.MEMPOOL_API_URL || 'https://explorer.bc-2.jp/api';
     const address = getDepositAddress();
     try {
         const tipRes = await fetch(`${MEMPOOL_API}/blocks/tip/height`, { signal: AbortSignal.timeout(8000) });
-
         let height = 0;
         if (tipRes.ok) {
             height = parseInt(await tipRes.text());
         } else {
-            await tipRes.text().catch(() => { });
+            await tipRes.text().catch(() => {});
         }
-        return {
-            network: 'signet',
-            block_height: height,
-            address,
-            status: 'online',
-            mempool_url: `${MEMPOOL_API}/address/${address}`,
-        };
+        return { network: 'signet', block_height: height, address, status: 'online' };
     } catch (e: any) {
         console.error("[BridgeStatus] Error:", e);
-        return {
-            network: 'signet',
-            block_height: 0,
-            address,
-            status: 'degraded',
-            mempool_url: `${MEMPOOL_API}/address/${address}`,
-        };
+        return { network: 'signet', block_height: 0, address, status: 'degraded' };
     }
 }
 
@@ -209,4 +228,3 @@ export const bitcoinSignetService = {
     verifyTransaction,
     getBridgeStatus
 };
-

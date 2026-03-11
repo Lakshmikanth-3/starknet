@@ -48,7 +48,8 @@ router.get('/detect-lock', async (req: Request, res: Response) => {
             });
         }
 
-        const result = await bitcoinSignetService.detectLock(address, amountBTC);
+        const sinceMs = req.query.since ? parseInt(req.query.since as string) : undefined;
+        const result = await bitcoinSignetService.detectLock(address, amountBTC, sinceMs);
         console.log('[bridge/detect-lock] Result:', result);
 
         return res.status(200).json(result);
@@ -265,10 +266,11 @@ router.post('/spv-deposit', async (req: Request, res: Response) => {
         merkleProofWords: z.array(z.array(z.number()).length(8)),
         bitcoin_txid: z.string().optional(),
         vault_id: z.string().uuid().optional(),
-        // ✅ NEW: Accept secret and nullifier_hash for database storage
         secret: z.string().optional(),
         nullifier_hash: z.string().optional(),
         amount: z.number().positive().optional(),
+        // Privacy: the Bitcoin address that sent the deposit (from Xverse wallet)
+        deposit_sender_address: z.string().startsWith('tb1').optional(),
     });
 
     const parsed = schema.safeParse(req.body);
@@ -276,7 +278,7 @@ router.post('/spv-deposit', async (req: Request, res: Response) => {
         return res.status(400).json({ error: 'Validation failed', details: parsed.error.issues });
     }
 
-    const { commitment, blockHeight, txPos, rawTxBytes, voutIndex, merkleProofWords, bitcoin_txid, vault_id, secret, nullifier_hash, amount } = parsed.data;
+    const { commitment, blockHeight, txPos, rawTxBytes, voutIndex, merkleProofWords, bitcoin_txid, vault_id, secret, nullifier_hash, amount, deposit_sender_address } = parsed.data;
 
     try {
         // ✅ CRITICAL FIX: Wait for header to be available before submitting
@@ -340,18 +342,19 @@ router.post('/spv-deposit', async (req: Request, res: Response) => {
             
             try {
                 db.prepare(
-                    `INSERT INTO vaults (id, owner_address, commitment, encrypted_amount, salt, randomness_hint, lock_duration_days, created_at, unlock_at, status, deposit_tx_hash, bitcoin_txid, nullifier_hash)
-                     VALUES (?, ?, ?, ?, ?, ?, 30, ?, ?, 'active', ?, ?, ?)
+                    `INSERT INTO vaults (id, owner_address, commitment, encrypted_amount, salt, randomness_hint, lock_duration_days, created_at, unlock_at, status, deposit_tx_hash, bitcoin_txid, nullifier_hash, deposit_sender_address)
+                     VALUES (?, ?, ?, ?, ?, ?, 30, ?, ?, 'active', ?, ?, ?, ?)
                      ON CONFLICT(id) DO UPDATE SET 
                         deposit_tx_hash = ?,
                         bitcoin_txid = ?,
                         nullifier_hash = COALESCE(nullifier_hash, ?),
+                        deposit_sender_address = COALESCE(deposit_sender_address, ?),
                         status = 'active'`
                 ).run(
                     vault_id, actualOwnerAddress, commitment, encryptedAmount, actualSalt, actualRandomnessHint, 
-                    Date.now(), Date.now() + 86400 * 30, txHash, bitcoin_txid ?? null, nullifier_hash,
+                    Date.now(), Date.now() + 86400 * 30, txHash, bitcoin_txid ?? null, nullifier_hash, deposit_sender_address ?? null,
                     // ON CONFLICT values
-                    txHash, bitcoin_txid ?? null, nullifier_hash
+                    txHash, bitcoin_txid ?? null, nullifier_hash, deposit_sender_address ?? null
                 );
                 console.log(`[bridge/spv-deposit] ✅ Vault stored with nullifier: ${nullifier_hash.substring(0, 32)}...`);
             } catch (dbErr: any) {

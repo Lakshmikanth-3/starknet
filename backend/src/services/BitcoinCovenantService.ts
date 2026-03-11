@@ -111,26 +111,34 @@ export class BitcoinCovenantService {
         const utxos = await this.fetchCovenantUtxos();
         if (utxos.length === 0) throw new Error('No funds in covenant vault');
 
-        // 3. Select UTXO
-        const selectedUtxo = this.selectUtxo(utxos, auth.amount_sats);
-        console.log(`[Covenant] Selected UTXO: ${selectedUtxo.txid}:${selectedUtxo.vout} (${selectedUtxo.value} sats)`);
+        // 3. Select UTXOs (may combine multiple to cover amount + fee)
+        const FEE_PER_INPUT = 2000; // safe flat fee per input for P2TR tapscript spend
+        const { selectedUtxos, totalValue } = this.selectUtxos(utxos, auth.amount_sats, FEE_PER_INPUT);
+        const fee = FEE_PER_INPUT * selectedUtxos.length;
+        console.log(
+            `[Covenant] Selected ${selectedUtxos.length} UTXO(s): ` +
+            selectedUtxos.map(u => `${u.txid.slice(0,8)}…=${u.value}`).join(', ') +
+            ` | total=${totalValue} fee=${fee}`
+        );
 
-        // 4. Build PSBT
+        // 4. Build PSBT with all inputs
         const psbt = new bitcoin.Psbt({ network: OPCAT_SIGNET });
 
-        psbt.addInput({
-            hash: selectedUtxo.txid,
-            index: selectedUtxo.vout,
-            witnessUtxo: {
-                script: Buffer.from(selectedUtxo.scriptPubKey, 'hex'),
-                value: BigInt(selectedUtxo.value),
-            },
-            tapLeafScript: [{
-                leafVersion: 0xc0,
-                script: COVENANT.tapscript,
-                controlBlock: COVENANT.controlBlock,
-            }],
-        });
+        for (const utxo of selectedUtxos) {
+            psbt.addInput({
+                hash: utxo.txid,
+                index: utxo.vout,
+                witnessUtxo: {
+                    script: Buffer.from(utxo.scriptPubKey, 'hex'),
+                    value: BigInt(utxo.value),
+                },
+                tapLeafScript: [{
+                    leafVersion: 0xc0,
+                    script: COVENANT.tapscript,
+                    controlBlock: COVENANT.controlBlock,
+                }],
+            });
+        }
 
         // Output to user
         psbt.addOutput({
@@ -138,9 +146,8 @@ export class BitcoinCovenantService {
             value: BigInt(auth.amount_sats),
         });
 
-        // Change output
-        const fee = 2000;
-        const change = selectedUtxo.value - auth.amount_sats - fee;
+        // Change output (if dust-worthy)
+        const change = totalValue - auth.amount_sats - fee;
         if (change > 546) {
             psbt.addOutput({
                 address: this.COVENANT_ADDRESS,
@@ -149,21 +156,19 @@ export class BitcoinCovenantService {
             console.log(`[Covenant] Change output: ${change} sats to ${this.COVENANT_ADDRESS}`);
         }
 
-        // 5. Sign the tapscript input with the sequencer key
+        // 5. Sign every input with the same tapscript leaf
         const keypair = ECPair.fromPrivateKey(COVENANT.privKey, { network: OPCAT_SIGNET });
 
-        // tapLeafHash for input index 0 leaf 0
         const leafHash = bitcoin.crypto.taggedHash(
             'TapLeaf',
             Buffer.concat([Buffer.from([0xc0]), this.varInt(COVENANT.tapscript.length), COVENANT.tapscript]),
         );
 
-        // Sign the tapscript leaf via signTaprootInput
-        // tapLeafHashToSign can be undefined to sign all available leaves
-        psbt.signTaprootInput(0, keypair as any, Buffer.from(leafHash));
-        psbt.validateSignaturesOfInput(0, () => true);
+        for (let i = 0; i < selectedUtxos.length; i++) {
+            psbt.signTaprootInput(i, keypair as any, Buffer.from(leafHash));
+            psbt.validateSignaturesOfInput(i, () => true);
+        }
 
-        // Finalize the input using bitcoinjs built-in tapscript finalization
         psbt.finalizeAllInputs();
 
         // 6. Extract
@@ -184,23 +189,31 @@ export class BitcoinCovenantService {
     static async broadcastCovenantTransaction(txHex: string): Promise<string> {
         console.log(`[Covenant] Broadcasting transaction...`);
 
-        const response = await fetch(`${this.MEMPOOL_API}/tx`, {
-            method: 'POST',
-            body: txHex,
-            headers: { 'Content-Type': 'text/plain' },
-        });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
 
-        if (!response.ok) {
-            const error = await response.text();
-            throw new Error(`Broadcast failed: ${error}`);
+        try {
+            const response = await fetch(`${this.MEMPOOL_API}/tx`, {
+                method: 'POST',
+                body: txHex,
+                headers: { 'Content-Type': 'text/plain' },
+                signal: controller.signal as any,
+            });
+
+            if (!response.ok) {
+                const error = await response.text();
+                throw new Error(`Broadcast failed: ${error}`);
+            }
+
+            const txid = await response.text();
+            console.log(`[Covenant] ✅ Transaction broadcast:`);
+            console.log(`[Covenant]    TXID: ${txid}`);
+            console.log(`[Covenant]    Explorer: ${this.MEMPOOL_API.replace('/api', '')}/tx/${txid}`);
+
+            return txid;
+        } finally {
+            clearTimeout(timeout);
         }
-
-        const txid = await response.text();
-        console.log(`[Covenant] ✅ Transaction broadcast:`);
-        console.log(`[Covenant]    TXID: ${txid}`);
-        console.log(`[Covenant]    Explorer: ${this.MEMPOOL_API.replace('/api', '')}/tx/${txid}`);
-
-        return txid;
     }
 
     /**
@@ -242,25 +255,59 @@ export class BitcoinCovenantService {
     // ── Private helpers ────────────────────────────────────────────────────────
 
     private static async fetchCovenantUtxos(): Promise<any[]> {
-        const r = await fetch(`${this.MEMPOOL_API}/address/${this.COVENANT_ADDRESS}/utxo`);
-        if (!r.ok) throw new Error(`Failed to fetch UTXOs: ${r.statusText}`);
-        const utxos = await r.json() as any[];
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
 
-        for (const utxo of utxos) {
-            const txRes = await fetch(`${this.MEMPOOL_API}/tx/${utxo.txid}`);
-            const tx = await txRes.json() as any;
-            utxo.scriptPubKey = tx.vout[utxo.vout].scriptpubkey;
+        try {
+            const r = await fetch(`${this.MEMPOOL_API}/address/${this.COVENANT_ADDRESS}/utxo`, {
+                signal: controller.signal as any,
+            });
+            if (!r.ok) throw new Error(`Failed to fetch UTXOs: ${r.statusText}`);
+            const utxos = await r.json() as any[];
+
+            for (const utxo of utxos) {
+                const txRes = await fetch(`${this.MEMPOOL_API}/tx/${utxo.txid}`, {
+                    signal: controller.signal as any,
+                });
+                const tx = await txRes.json() as any;
+                utxo.scriptPubKey = tx.vout[utxo.vout].scriptpubkey;
+            }
+            return utxos;
+        } finally {
+            clearTimeout(timeout);
         }
-        return utxos;
     }
 
-    private static selectUtxo(utxos: any[], amount: number): any {
-        utxos.sort((a, b) => b.value - a.value);
-        const needed = amount + 2000;
-        for (const utxo of utxos) {
-            if (utxo.value >= needed) return utxo;
+    /**
+     * Greedy UTXO selection — picks largest UTXOs first until total >= amount + fee.
+     * Returns the selected UTXOs and their combined value.
+     */
+    private static selectUtxos(
+        utxos: any[],
+        amount: number,
+        feePerInput: number
+    ): { selectedUtxos: any[]; totalValue: number } {
+        // Sort largest first for better fee efficiency
+        const sorted = [...utxos].sort((a, b) => b.value - a.value);
+
+        const selected: any[] = [];
+        let totalValue = 0;
+
+        for (const utxo of sorted) {
+            selected.push(utxo);
+            totalValue += utxo.value;
+            const fee = feePerInput * selected.length;
+            if (totalValue >= amount + fee) {
+                return { selectedUtxos: selected, totalValue };
+            }
         }
-        throw new Error(`Insufficient funds. Need ${needed} sats, have ${utxos[0]?.value || 0}`);
+
+        // Not enough funds even using all UTXOs
+        const totalFee = feePerInput * sorted.length;
+        throw new Error(
+            `Insufficient funds. Need ${amount + feePerInput} sats (incl. fee), ` +
+            `covenant total: ${totalValue} sats across ${sorted.length} UTXO(s).`
+        );
     }
 
     /** Encode a varint for use in BIP341 tagged-hash pre-images */

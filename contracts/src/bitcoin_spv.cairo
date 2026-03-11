@@ -296,3 +296,36 @@ pub fn script_matches_p2wpkh(script: Span<u8>, pubkey_hash: Span<u8>) -> bool {
     };
     matches
 }
+
+/// Check that a scriptPubKey is P2TR (Pay-to-Taproot) paying to the given
+/// 32-byte tweaked public key.
+///
+/// P2TR scriptPubKey = 0x51 0x20 <32 bytes>  (34 bytes total)
+///   0x51 = OP_1  (segwit version 1)
+///   0x20 = OP_PUSHBYTES_32
+///   32 bytes = tweaked x-only public key (output of TapTweak)
+///
+/// @param script    - scriptPubKey bytes from the tx output
+/// @param tapkey    - 32-byte expected tweaked x-only public key
+pub fn script_matches_p2tr(script: Span<u8>, tapkey: Span<u8>) -> bool {
+    if script.len() != 34 {
+        return false;
+    }
+    // 0x51 = OP_1, 0x20 = PUSH_32
+    if *script[0] != 0x51 || *script[1] != 0x20 {
+        return false;
+    }
+    let mut i: usize = 0;
+    let mut matches = true;
+    loop {
+        if i >= 32 {
+            break;
+        }
+        if *script[i + 2] != *tapkey[i] {
+            matches = false;
+            break;
+        }
+        i += 1;
+    };
+    matches
+}

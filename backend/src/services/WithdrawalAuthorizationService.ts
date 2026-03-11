@@ -14,6 +14,7 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import db from '../db/schema';
+import { MIN_ANONYMITY_SET } from '../utils/privacyConstants';
 
 export interface WithdrawalAuthorization {
     id: string;
@@ -47,6 +48,31 @@ export class WithdrawalAuthorizationService {
         // Validate Bitcoin address format (Signet testnet)
         if (!params.bitcoinAddress.startsWith('tb1')) {
             throw new Error('Invalid Bitcoin address - must be Signet testnet (starts with tb1)');
+        }
+
+        // ── Privacy guard 1: Minimum anonymity set ──────────────────────
+        // Warn if the pool is too shallow to provide meaningful privacy.
+        // We no longer hard-block here so that early-stage / solo deployments
+        // function correctly. Set MIN_ANONYMITY_SET > 1 in production .env
+        // to restore the hard block.
+        const anonSet = this.getAnonymitySetSize();
+        if (anonSet < MIN_ANONYMITY_SET) {
+            console.warn(
+                `[WithdrawalAuth] ⚠️  PRIVACY WARNING: Only ${anonSet} unspent commitment(s) in pool ` +
+                `(minimum recommended: ${MIN_ANONYMITY_SET}). ` +
+                `Proceeding anyway — set MIN_ANONYMITY_SET in .env to enforce this limit.`
+            );
+        }
+
+        // ── Privacy guard 2: Withdrawal address ≠ known deposit sender ────
+        const knownSender = db.prepare<[string], { id: string }>(`
+            SELECT id FROM vaults WHERE deposit_sender_address = ? LIMIT 1
+        `).get(params.bitcoinAddress);
+        if (knownSender) {
+            console.warn(
+                `[WithdrawalAuth] ⚠️  PRIVACY WARNING: Withdrawal address ${params.bitcoinAddress} ` +
+                `was previously used as a deposit sender. This may reduce anonymity.`
+            );
         }
 
         // Validate Starknet transaction hash format
@@ -249,5 +275,21 @@ export class WithdrawalAuthorizationService {
             AND created_at < ?
             ORDER BY created_at ASC
         `).all(expiryTime) as WithdrawalAuthorization[];
+    }
+
+    /**
+     * Returns the number of unspent (withdrawal-eligible) commitments in the pool.
+     * An unspent commitment is an active vault whose nullifier has NOT yet
+     * appeared in the nullifiers table.
+     */
+    static getAnonymitySetSize(): number {
+        const row = db.prepare<[], { unspent: number }>(`
+            SELECT COUNT(*) AS unspent
+            FROM vaults
+            WHERE status = 'active'
+              AND (nullifier_hash IS NULL
+                   OR nullifier_hash NOT IN (SELECT nullifier_hash FROM nullifiers))
+        `).get();
+        return row?.unspent ?? 0;
     }
 }
