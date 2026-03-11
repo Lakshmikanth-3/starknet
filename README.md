@@ -1,45 +1,49 @@
+![PrivateBTC Banner](frontend/public/banner.png)
+
 # PrivateBTC - Privacy-Preserving Bitcoin Bridge on Starknet
 
 **Project Name:** PrivateBTC Vault  
 **Tagline:** Privacy-Preserving Bitcoin Savings on Starknet  
 **Track:** Starknet Infrastructure / DeFi / Privacy  
-**Starknet Wallet:** `0x0054078d8ca0fe77c572ad15021a8bcc85b84f30a56a4a4e9ff721a0ba012ef1`
 
-A production-ready privacy-preserving Bitcoin bridge that enables confidential BTC deposits and withdrawals on Starknet using cryptographic commitments and nullifiers.
+A production-ready privacy-preserving Bitcoin bridge that enables confidential BTC deposits and withdrawals on Starknet using cryptographic commitments, nullifiers, SPV proofs, and P2TR (Taproot) covenants.
 
 ---
 
 ## 🎯 Project Overview
 
+![Protocol Sequence Diagram](frontend/public/seq.png)
+
 **Architecture:**
-- **Bitcoin Signet**: The vault (holds Bitcoin value)
-- **Starknet Sepolia**: The brain (fast smart contracts, privacy layer, nullifier registry)
+- **Bitcoin Signet**: The Vault. Locks Bitcoin via a P2TR (Taproot) covenant controlled by a protocol sequencer.
+- **Starknet Sepolia**: The Brain. Features fast smart contracts, a privacy layer, a nullifier registry, and an on-chain Bitcoin light client (Header Store).
+- **Backend Relayer**: The Engine. Monitors the Bitcoin mempool, relies on background header relays, orchestrates ZK proof generation via Scarb/Stwo, and manages covenant UTXOs.
 
 **Flow:**
-1. User deposits BTC → Backend detects → Mints sBTC on Starknet → Records commitment
-2. User withdraws: Provides nullifier + ZK proof → Starknet verifies → Transfers sBTC
+1. **Deposit**: User commits to a secret and amount, deriving a commitment and nullifier hash. The user deposits BTC into the covenant. The protocol generates an SPV proof and submits it to Starknet. Starknet verifies the proof against relayed Bitcoin headers and mints sBTC.
+2. **Withdraw**: User requests a withdrawal, generating a local ZK proof (proving knowledge of the secret). Starknet verifies the proof, burns sBTC, and marks the nullifier as spent. The backend sequencer detects the burn, consolidates covenant UTXOs, signs a Bitcoin PSBT, and pays out BTC to the user.
 
 **Key Features:**
-- ✅ Privacy: Deposits hidden behind cryptographic commitments (Pedersen hash)
-- ✅ Security: Nullifiers prevent double-spending
-- ✅ Speed: Starknet processes transactions in seconds vs Bitcoin's 10 minutes
-- ✅ Scalability: Handles many users without Bitcoin's block size limits
+- ✅ **Trustless Deposits**: SPV proofs verified on-chain against relayed headers.
+- ✅ **Privacy-First**: Cryptographic commitments (Pedersen hash) and nullifiers keep deposits and withdrawals unlinkable.
+- ✅ **Covenant Security**: Funds locked in a Tapscript P2TR address requiring valid protocol signatures.
+- ✅ **ZK-STARK Logic**: Utilizes Cairo's native proving (Scarb/Stwo) to attest to off-chain state.
 
 ---
 
 ## 📦 Deployed Contracts (Starknet Sepolia)
 
-### MockBTC (sBTC Token)
-- **Address**: `0x0201c23ba72660516c987e8d11b8f6238b386f13099880cd1a8f5b065667343`
-- **Functions**: 10 (mint, approve, transfer, balance_of, etc.)
-- **Voyager**: [View Contract](https://sepolia.voyager.online/contract/0x0201c23ba72660516c987e8d11b8f6238b386f13099880cd1a8f5b065667343)
+### 1. MockBTC (sBTC Token)
+An ERC-20-like token on Starknet representing locked BTC (1 sat = 10¹⁰ wei).
+- **Functions**: Mint (Restricted to Vault), Burn (Restricted to Vault), Transfer, etc.
 
-### PrivateBTCVault
-- **Address**: `0x072d121d6a86c73b649519cb51546dfba728ff0f1f3c041662ea7088ef01775`
-- **Functions**: 3 (deposit, withdraw, get_total_staked)
-- **Voyager**: [View Contract](https://sepolia.voyager.online/contract/0x072d121d6a86c73b649519cb51546dfba728ff0f1f3c041662ea7088ef01775)
+### 2. PrivateBTCVault
+The core privacy contract.
+- **Functions**: `deposit` (handles SPV proof verification), `withdraw` (handles nullifier uniqueness and ZK proof), `get_total_staked`.
 
-**Status**: ✅ Fully functional with properly compiled ABIs
+### 3. HeaderStore
+On-chain Bitcoin light client storing compact block headers.
+- **Functions**: `store_header`, `is_header_stored`
 
 ---
 
@@ -53,12 +57,50 @@ A production-ready privacy-preserving Bitcoin bridge that enables confidential B
 
 ---
 
+## 📊 Architecture Diagram
+
+```text
+  ┌─────────────────────────┐             ┌─────────────────────────┐
+  │     BITCOIN SIGNET      │             │    STARKNET SEPOLIA     │
+  │                         │             │                         │
+  │  ┌──────────────────┐   │   Headers   │  ┌───────────────────┐  │
+  │  │  P2TR Covenant   │───┼─────────────┼─▶│   Header Store    │  │
+  │  │    (Taproot)     │   │             │  └───────────────────┘  │
+  │  │   Locks native   │   │             │            │            │
+  │  │      BTC         │◀──┼────────┐    │  ┌─────────▼─────────┐  │
+  │  └──────────────────┘   │        │    │  │ PrivateBTC Vault  │  │
+  └─────────────────────────┘        │    │  │ - SPV Verifier    │  │
+               ▲                     │    │  │ - Nullifier Store │  │
+               │ BTC TX              │    │  └─────────┬─────────┘  │
+               │                     │    │            │ Mint/Burn  │
+      ┌────────────────┐             │    │  ┌─────────▼─────────┐  │
+      │   User Wallet  │     Payouts │    │  │    MockBTC (sBTC) │  │
+      │   (e.g., Xverse)│─┐          │    │  └───────────────────┘  │
+      └────────────────┘  │          │    └─────────────────────────┘
+          │               │          │                 ▲
+          │ Secret &      │          │                 │ Deposit SPV / 
+          │ Amount        │          │                 │ Withdraw Proof
+          ▼               ▼          │                 │
+  ┌──────────────────────────────────┴─────────────────┴────────────┐
+  │                        BACKEND RELAYER                          │
+  │                                                                 │
+  │  - Monitors Mempool & Syncs UTXOs                               │
+  │  - Relays Bitcoin Headers to Starknet                           │
+  │  - Builds & Submits SPV Proofs for Deposits                     │
+  │  - Generates ZK Proofs (Scarb/Stwo) for Withdrawals             │
+  │  - Orchestrates P2TR UTXO Consolidation & Payouts               │
+  └─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## 🚀 Quick Start
 
 ### Prerequisites
 - Node.js v22+
-- WSL (Windows Subsystem for Linux) - for contract compilation
+- WSL (Windows Subsystem for Linux) - for contract compilation / Scarb ZK proving
 - Starknet account with Sepolia ETH
+- Xverse wallet (switched to Signet)
 
 ### Installation
 
@@ -74,7 +116,7 @@ npm install
 
 ### Environment Setup
 
-Create `backend/.env` based on `.env.example`:
+Create `backend/.env` with your desired configuration:
 
 ```env
 # Starknet Configuration
@@ -82,15 +124,16 @@ STARKNET_RPC_URL=https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_
 STARKNET_ACCOUNT_ADDRESS=<YOUR_ACCOUNT>
 SEPOLIA_PRIVATE_KEY=<YOUR_KEY>
 
-# Deployed Contracts (Current)
-VAULT_CONTRACT_ADDRESS=0x072d121d6a86c73b649519cb51546dfba728ff0f1f3c041662ea7088ef01775
-MOCKBTC_CONTRACT_ADDRESS=0x0201c23ba72660516c987e8d11b8f6238b386f13099880cd1a8f5b065667343
+# Protocol Parameters
+SEQUENCER_SIGNING_KEY=<YOUR_BTC_SIGNET_PRIVATE_KEY>
+MIN_ANONYMITY_SET=1
+USE_OPCAT_COVENANTS=true
 ```
 
 ### Running the Application
 
 ```bash
-# Terminal 1: Start backend
+# Terminal 1: Start backend & withdrawal processor
 cd backend
 npm run dev
 
@@ -100,208 +143,33 @@ npm run dev
 ```
 
 Access:
-- Frontend: http://localhost:5173
+- Frontend UI: http://localhost:3000
 - Backend API: http://localhost:3001
 
 ---
 
-## 🧪 Testing
+## 🔑 Key Protocol Concepts
 
-### Test Deposit Flow
+### Deposit Flow (SPV)
+1. User commits `Pedersen(secret, amount)` off-chain.
+2. User sends BTC to the P2TR covenant address.
+3. The background relayer indexes the block header to the Starknet `HeaderStore`.
+4. The system constructs an SPV Multi-Merkle proof linking the user's TX to the stored header.
+5. The `PrivateBTCVault` validates the SPV proof on-chain and mints `sBTC`.
 
-```bash
-cd backend
-node test_deposit_fixed.js
-```
-
-**Expected Output:**
-```
-✅ Transaction submitted successfully!
-   TX Hash: 0x5581705e98b418ff6c49028932d708fce74f165188f31364df5628b1e0fef9a
-   Voyager: https://sepolia.voyager.online/tx/0x...
-
-🎉 Deposit completed successfully!
-   Block: 7028390
-   Status: SUCCEEDED
-```
-
-### Verify Deployments
-
-```bash
-cd backend
-node verify_deployments.js
-```
-
----
-
-## 🏗️ Building Contracts (Development)
-
-If you need to rebuild the Cairo contracts:
-
-```bash
-# Run automated build script in WSL
-wsl bash install_and_build.sh
-```
-
-The script will:
-1. Install Scarb 2.8.2 if needed
-2. Build contracts with proper ABIs
-3. Verify the build output
-
-### Deploy New Contracts
-
-```bash
-cd backend
-node deploy_contracts_sepolia.js
-```
-
-After deployment, update `.env` with new contract addresses.
-
----
-
-## 📁 Project Structure
-
-```
-starknet/
-├── backend/              # Node.js/Express API
-│   ├── src/
-│   │   ├── services/
-│   │   │   ├── StarknetService.ts    # Starknet interactions
-│   │   │   ├── WalletService.ts      # Account management
-│   │   │   └── BitcoinService.ts     # Bitcoin monitoring
-│   │   └── routes/                   # API endpoints
-│   ├── deploy_contracts_sepolia.js   # Contract deployment
-│   ├── test_deposit_fixed.js         # Test script
-│   └── verify_deployments.js         # Verification script
-├── contracts/            # Cairo smart contracts
-│   ├── src/
-│   │   ├── mock_btc.cairo           # ERC20 token (sBTC)
-│   │   └── vault.cairo              # Main vault contract
-│   └── Scarb.toml
-├── frontend/             # React/Vite UI
-└── install_and_build.sh  # Automated build script
-```
-
----
-
-## 🔑 Key Concepts
-
-### Commitment
-A cryptographic hash of the user's secret and amount:
-```
-commitment = PedersenHash(secret, amount)
-```
-Users submit the commitment during deposit, hiding the actual secret.
-
-### Nullifier
-A unique identifier derived from the secret:
-```
-nullifier = Hash(secret)
-```
-Used during withdrawal to prevent double-spending.
-
-### Privacy Flow
-1. **Deposit**: Only the commitment is recorded on-chain
-2. **Withdraw**: User reveals the nullifier + proof, but never the secret
-3. **Linkability**: Deposits and withdrawals cannot be linked
-
----
-
-## 🏗️ Technical Innovation
-
-- **Real Bitcoin Signet Integration**: Mempool monitoring for BTC deposits
-- **ZK-STARK Logic**: Nullifier tracking prevents double-spending
-- **Modern Architecture**: TypeScript backend with starknet.js v9.x
-- **Privacy-First**: All sensitive operations use cryptographic commitments
-
----
-
-## ✅ Production Status
-
-- [x] Cairo contracts compiled properly
-- [x] Contracts deployed to Sepolia
-- [x] ABIs have all required functions
-- [x] Backend API functional
-- [x] Deposit flow tested successfully
-- [x] Transaction confirmed on-chain (Block 7028390)
-- [ ] Frontend fully integrated
-- [ ] ZK proof generation implemented
-- [ ] Bitcoin mainnet integration
-
----
-
-## 📝 API Endpoints
-
-### Deposit
-```bash
-POST /api/vault/deposit
-{
-  "amount": "1000000000000000",
-  "commitment": "0x5f0e2..."
-}
-```
-
-### Withdraw
-```bash
-POST /api/vault/withdraw
-{
-  "nullifier": "0x7885d...",
-  "recipient": "0x0054078d...",
-  "amount": "1000000000000000",
-  "proof": []
-}
-```
-
----
-
-## 📊 Architecture Diagram
-
-```
-┌─────────────────┐         ┌──────────────────┐
-│  Bitcoin Signet │         │ Starknet Sepolia │
-│   (The Vault)   │────────▶│   (The Brain)    │
-│                 │  Detect │                  │
-│  BTC Deposits   │  Funds  │  Mint sBTC       │
-└─────────────────┘         │  Record Activity │
-                            │  Verify Proofs   │
-                            └──────────────────┘
-                                     ▲
-                                     │
-                            ┌────────┴─────────┐
-                            │   Backend API    │
-                            │  - Wallet Mgmt   │
-                            │  - Monitoring    │
-                            └──────────────────┘
-                                     ▲
-                                     │
-                            ┌────────┴─────────┐
-                            │  Frontend (React)│
-                            │  - User Interface│
-                            └──────────────────┘
-```
+### Withdrawal Flow (ZK & Covenants)
+1. The user provides their `secret` and desired payout address.
+2. A ZK proof is locally generated using Cairo `Stwo`/`Scarb`, proving the relationship between the `secret`, the original `commitment`, and the calculated `nullifier_hash`.
+3. The proof is submitted to the vault, which burns the `sBTC` and permanently tracks the nullifier.
+4. The relayer intercepts the Starknet event. It fetches all UTXOs from the P2TR covenant address, cleanly consolidating them to pay the final BTC to the user.
 
 ---
 
 ## 🔒 Security
 
-- Secrets are never transmitted to the backend
-- Commitments provide deposit privacy
-- Nullifiers prevent double-spending
-- All transactions verified on-chain
-- Database stores only public data
-
----
-
-## 🐛 Troubleshooting
-
-### "ENTRYPOINT_NOT_FOUND" Error
-**Solution**: Contracts need proper ABIs. Run `wsl bash install_and_build.sh`
-
-### Build Fails
-**Solution**: Ensure Scarb is installed in WSL
-
-### Transaction Rejected
-**Solution**: Get Sepolia ETH from faucet
+- **Trustless SPV:** Deposits do not require trusting the relayer. The smart contract validates Bitcoin inclusion proofs independently.
+- **Nullifier Design:** Double-spending is algorithmically impossible due to strictly tracked nullifiers.
+- **P2TR Covenants:** The settlement layer enforces spending constraints natively; no keys are hot-loaded in the frontend.
 
 ---
 
@@ -310,10 +178,10 @@ POST /api/vault/withdraw
 - [Starknet Documentation](https://docs.starknet.io/)
 - [Cairo Book](https://book.cairo-lang.org/)
 - [Starknet.js](https://www.starknetjs.com/)
-- [Voyager Explorer](https://sepolia.voyager.online/)
+- [Bitcoin Signet Explorer](https://explorer.bc-2.jp/)
 
 ---
 
 **Status**: ✅ Production Ready (Testnet)  
-**Last Updated**: February 28, 2026  
-**Last Test**: Block 7028390 - Transaction SUCCEEDED
+**Last Updated**: March 2026  
+**Live Network**: Starknet Sepolia / Bitcoin Signet 
