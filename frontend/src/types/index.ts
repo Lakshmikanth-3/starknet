@@ -40,9 +40,10 @@ export interface WithdrawRequest {
 }
 
 export interface WithdrawResponse {
-    message: string;
-    status: string;
+    message?: string;
+    status?: string;
     txHash?: string;
+    bitcoinTxid?: string;
 }
 
 export interface DetectLockResponse {
